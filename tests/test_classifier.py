@@ -53,6 +53,7 @@ def test_supported_extensions_are_lowercase():
     for ext in SUPPORTED_EXTENSIONS:
         assert ext == ext.lower()
         assert ext.startswith(".")
+    assert len(SUPPORTED_EXTENSIONS) == 8
 
 
 # --- score_image ---

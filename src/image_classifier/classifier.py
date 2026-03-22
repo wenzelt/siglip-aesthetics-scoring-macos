@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import torch
 from PIL import Image, UnidentifiedImageError
@@ -39,7 +40,7 @@ def get_device() -> torch.device:
     return torch.device("cpu")
 
 
-def load_model(device: torch.device) -> tuple:
+def load_model(device: torch.device) -> tuple[Any, Any]:
     """Load the aesthetic predictor model and preprocessor.
 
     On first run this downloads the checkpoint (~1.5 GB) to the
@@ -55,11 +56,11 @@ def load_model(device: torch.device) -> tuple:
     return model, preprocessor
 
 
-def score_image(path: Path, model, preprocessor, device: torch.device) -> float:
+def score_image(path: Path, model: Any, preprocessor: Any, device: torch.device) -> float:
     """Score a single image. Raises ClassifierError if the file is unreadable."""
     try:
         image = Image.open(path).convert("RGB")
-    except (UnidentifiedImageError, OSError, FileNotFoundError) as exc:
+    except (UnidentifiedImageError, OSError) as exc:
         raise ClassifierError(str(exc)) from exc
 
     pixel_values = (
