@@ -26,7 +26,7 @@ def test_write_rating_calls_exiftool_with_correct_args(tmp_path):
     img.touch()
     mock_result = MagicMock()
     mock_result.returncode = 0
-    with patch("subprocess.run", return_value=mock_result) as mock_run:
+    with patch("image_classifier.metadata.subprocess.run", return_value=mock_result) as mock_run:
         write_rating(img, rating=4)
     mock_run.assert_called_once()
     call_args = mock_run.call_args[0][0]
@@ -42,10 +42,11 @@ def test_write_rating_raises_metadata_error_on_nonzero_exit(tmp_path):
     mock_result = MagicMock()
     mock_result.returncode = 1
     mock_result.stderr = "Error: something went wrong"
-    with patch("subprocess.run", return_value=mock_result):
+    with patch("image_classifier.metadata.subprocess.run", return_value=mock_result):
         with pytest.raises(MetadataError) as exc_info:
             write_rating(img, rating=3)
     assert "photo.jpg" in str(exc_info.value)
+    assert "something went wrong" in str(exc_info.value)
 
 
 def test_write_rating_all_valid_ratings(tmp_path):
@@ -53,7 +54,7 @@ def test_write_rating_all_valid_ratings(tmp_path):
     img.touch()
     mock_result = MagicMock()
     mock_result.returncode = 0
-    with patch("subprocess.run", return_value=mock_result) as mock_run:
+    with patch("image_classifier.metadata.subprocess.run", return_value=mock_result) as mock_run:
         for rating in range(1, 6):
             write_rating(img, rating=rating)
             call_args = mock_run.call_args[0][0]
