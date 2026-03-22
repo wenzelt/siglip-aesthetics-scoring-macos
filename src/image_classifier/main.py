@@ -34,6 +34,8 @@ def setup_log() -> logging.Logger | None:
     import logging
 
     logger = logging.getLogger("classify")
+    if logger.handlers:
+        return logger
     logger.setLevel(logging.ERROR)
     try:
         LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -42,10 +44,7 @@ def setup_log() -> logging.Logger | None:
         logger.addHandler(handler)
         return logger
     except OSError:
-        console.print(
-            f"[yellow]Warning: could not open log file at {LOG_PATH}[/yellow]",
-            file=sys.stderr,
-        )
+        print(f"Warning: could not open log file at {LOG_PATH}", file=sys.stderr)
         return None
 
 
