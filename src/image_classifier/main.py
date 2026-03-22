@@ -93,7 +93,7 @@ def print_summary(
     console.print()
     buckets: dict[int, int] = {5: 0, 4: 0, 3: 0, 2: 0, 1: 0}
     for row in rows:
-        buckets[row["rating"]] = buckets.get(row["rating"], 0) + 1
+        buckets[row["rating"]] += 1
 
     labels = {5: "8.5+", 4: "7–8.5", 3: "5.5–7", 2: "4–5.5", 1: "<4"}
     console.print("  Distribution:")
@@ -167,8 +167,8 @@ def main() -> None:
             try:
                 score = score_image(path, model, preprocessor, device)
                 rating = score_to_rating(score)
-                upsert(path, score, rating, conn)
                 write_rating(path, rating)
+                upsert(path, score, rating, conn)
                 scored += 1
                 progress.update(
                     task_id,
@@ -181,3 +181,4 @@ def main() -> None:
                 progress.update(task_id, advance=1)
 
     print_summary(scored, skipped, errors, folder, conn)
+    conn.close()

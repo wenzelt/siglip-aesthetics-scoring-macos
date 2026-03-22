@@ -59,7 +59,8 @@ def load_model(device: torch.device) -> tuple[Any, Any]:
 def score_image(path: Path, model: Any, preprocessor: Any, device: torch.device) -> float:
     """Score a single image. Raises ClassifierError if the file is unreadable."""
     try:
-        image = Image.open(path).convert("RGB")
+        with Image.open(path) as img:
+            image = img.convert("RGB")
     except (UnidentifiedImageError, OSError) as exc:
         raise ClassifierError(str(exc)) from exc
 
