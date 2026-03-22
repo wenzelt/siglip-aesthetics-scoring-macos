@@ -7,13 +7,8 @@ from pathlib import Path
 DB_PATH = Path.home() / ".local" / "share" / "image-classifier" / "classify.db"
 
 
-def make_connection(db_path: str | Path = DB_PATH) -> sqlite3.Connection:
-    """Open (or create) the SQLite database and apply the schema."""
-    path = Path(db_path)
-    if str(path) != ":memory:":
-        path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
+def _apply_schema(conn: sqlite3.Connection) -> None:
+    """Create the images table if it does not exist."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS images (
             path         TEXT PRIMARY KEY,
@@ -23,6 +18,20 @@ def make_connection(db_path: str | Path = DB_PATH) -> sqlite3.Connection:
         )
     """)
     conn.commit()
+
+
+def make_connection(db_path: str | Path = DB_PATH) -> sqlite3.Connection:
+    """Open (or create) the SQLite database and apply the schema.
+
+    The caller owns the connection lifecycle and is responsible for closing it.
+    Pass ':memory:' for an in-memory database (useful in tests).
+    """
+    path = Path(db_path)
+    if str(path) != ":memory:":  # pathlib.Path(":memory:") stringifies back to ":memory:"
+        path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
+    conn.row_factory = sqlite3.Row
+    _apply_schema(conn)
     return conn
 
 
@@ -47,8 +56,9 @@ def upsert(path: Path, score: float, rating: int, conn: sqlite3.Connection) -> N
 
 def all_scores(folder: Path, conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Return all scored images whose path is inside folder (trailing-slash safe)."""
-    prefix = str(folder.resolve()) + "/"
+    # Escape LIKE wildcards in the folder path itself, then append the real wildcard.
+    safe_prefix = str(folder.resolve()).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/"
     return conn.execute(
-        "SELECT path, score, rating FROM images WHERE path LIKE ?",
-        (prefix + "%",),
+        "SELECT path, score, rating FROM images WHERE path LIKE ? ESCAPE '\\'",
+        (safe_prefix + "%",),
     ).fetchall()

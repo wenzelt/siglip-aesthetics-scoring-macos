@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import sqlite3
-from pathlib import Path
-
 import pytest
 
 from image_classifier.database import all_scores, is_processed, make_connection, upsert
