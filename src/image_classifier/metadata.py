@@ -58,17 +58,16 @@ def _is_score_tag(tag: str) -> bool:
 
 
 def write_score_tag(path: Path, rating: int, score: float) -> None:
-    """Write aesthetic score as macOS Finder tags, preserving user's own tags.
+    """Write aesthetic score as a macOS Finder tag, preserving user's own tags.
 
-    Writes two tags: a star string (e.g. '★★★★☆') and a numeric score (e.g. '7.3').
+    Writes a single numeric score tag (e.g. '7.3').
     Any previously written score tags are replaced; other user tags are preserved.
     """
-    star_tag = "★" * rating + "☆" * (5 - rating)
     score_tag = f"{score:.1f}"
 
     existing = _read_finder_tags(path)
     kept = [t for t in existing if not _is_score_tag(t)]
-    tags = kept + [star_tag, score_tag]
+    tags = kept + [score_tag]
 
     plist_bytes = plistlib.dumps(tags, fmt=plistlib.FMT_BINARY)
     result = subprocess.run(
