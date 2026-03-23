@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,6 +10,7 @@ from image_classifier.classifier import (
     SUPPORTED_EXTENSIONS,
     ClassifierError,
     get_device,
+    load_model,
     score_image,
     score_to_rating,
 )
@@ -118,3 +119,53 @@ def test_score_image_raises_classifier_error_for_missing_file(tmp_path):
 
     with pytest.raises(ClassifierError):
         score_image(missing, model, preprocessor, device)
+
+
+# --- load_model shim idempotency ---
+
+
+def _make_load_model_mocks():
+    """Return sys.modules patches needed to call load_model without real ML libs."""
+
+    class FakeAestheticModel:
+        def __init__(self, config, *args, **kwargs):
+            pass
+
+    class FakeSiglipConfig:
+        def __init__(self):
+            self.vision_config = object()
+
+    fake_ap = MagicMock()
+    fake_ap.convert_v2_5_from_siglip.return_value = (MagicMock(), MagicMock())
+
+    fake_siglip_mod = MagicMock()
+    fake_siglip_mod.AestheticPredictorV2_5Model = FakeAestheticModel
+
+    fake_config_mod = MagicMock()
+    fake_config_mod.SiglipConfig = FakeSiglipConfig
+
+    return fake_ap, fake_siglip_mod, fake_config_mod, FakeAestheticModel
+
+
+def test_load_model_shim_not_doubled(monkeypatch):
+    """Calling load_model twice must not double-wrap AestheticPredictorV2_5Model.__init__."""
+    fake_ap, fake_siglip_mod, fake_config_mod, FakeAestheticModel = _make_load_model_mocks()
+
+    monkeypatch.setitem(sys.modules, "aesthetic_predictor_v2_5", fake_ap)
+    monkeypatch.setitem(sys.modules, "aesthetic_predictor_v2_5.siglip_v2_5", fake_siglip_mod)
+    monkeypatch.setitem(
+        sys.modules, "transformers.models.siglip.configuration_siglip", fake_config_mod
+    )
+
+    device = MagicMock()
+    device.type = "cpu"
+
+    load_model(device)
+    init_after_first = FakeAestheticModel.__init__
+
+    load_model(device)
+    init_after_second = FakeAestheticModel.__init__
+
+    assert init_after_first is init_after_second, (
+        "load_model applied the shim twice — second call double-wrapped __init__"
+    )

@@ -93,7 +93,8 @@ def print_summary(
     console.print()
     buckets: dict[int, int] = {5: 0, 4: 0, 3: 0, 2: 0, 1: 0}
     for row in rows:
-        buckets[row["rating"]] += 1
+        if row["rating"] in buckets:
+            buckets[row["rating"]] += 1
 
     labels = {5: "8.5+", 4: "7–8.5", 3: "5.5–7", 2: "4–5.5", 1: "<4"}
     console.print("  Distribution:")
@@ -168,7 +169,7 @@ def main() -> None:
                 score = score_image(path, model, preprocessor, device)
                 rating = score_to_rating(score)
                 write_rating(path, rating)
-                write_score_tag(path, rating, score)
+                write_score_tag(path, score)
                 upsert(path, score, rating, conn)
                 scored += 1
                 progress.update(

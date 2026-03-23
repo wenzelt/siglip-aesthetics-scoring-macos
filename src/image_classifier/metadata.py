@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import plistlib
+import re
 import shutil
 import subprocess
 from pathlib import Path
+
+_SUBPROCESS_TIMEOUT = 30
+_SCORE_TAG_RE = re.compile(r"^\d{1,2}\.\d$")
 
 
 class MetadataError(Exception):
@@ -25,6 +29,7 @@ def write_rating(path: Path, rating: int) -> None:
         ["exiftool", f"-XMP:Rating={rating}", "-overwrite_original", str(path)],
         capture_output=True,
         text=True,
+        timeout=_SUBPROCESS_TIMEOUT,
     )
     if result.returncode != 0:
         raise MetadataError(f"exiftool failed for {path}: {result.stderr.strip()}")
@@ -36,28 +41,25 @@ def _read_finder_tags(path: Path) -> list[str]:
         ["xattr", "-px", "com.apple.metadata:_kMDItemUserTags", str(path)],
         capture_output=True,
         text=True,
+        timeout=_SUBPROCESS_TIMEOUT,
     )
     if result.returncode != 0:
         return []
     try:
-        hex_str = result.stdout.strip().replace(" ", "").replace("\n", "")
+        hex_str = "".join(result.stdout.split())
         return plistlib.loads(bytes.fromhex(hex_str))
-    except Exception:
+    except (ValueError, plistlib.InvalidFileException):
         return []
 
 
 def _is_score_tag(tag: str) -> bool:
-    """Return True if tag looks like a score we previously wrote (★… or bare float)."""
+    """Return True if tag looks like a score we previously wrote (★… or N.D format)."""
     if tag.startswith("★"):
         return True
-    try:
-        val = float(tag)
-        return 0.0 <= val <= 10.0
-    except ValueError:
-        return False
+    return bool(_SCORE_TAG_RE.match(tag))
 
 
-def write_score_tag(path: Path, rating: int, score: float) -> None:
+def write_score_tag(path: Path, score: float) -> None:
     """Write aesthetic score as a macOS Finder tag, preserving user's own tags.
 
     Writes a single numeric score tag (e.g. '7.3').
@@ -74,6 +76,7 @@ def write_score_tag(path: Path, rating: int, score: float) -> None:
         ["xattr", "-wx", "com.apple.metadata:_kMDItemUserTags", plist_bytes.hex(), str(path)],
         capture_output=True,
         text=True,
+        timeout=_SUBPROCESS_TIMEOUT,
     )
     if result.returncode != 0:
         raise MetadataError(f"xattr failed for {path}: {result.stderr.strip()}")
