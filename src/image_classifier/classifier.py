@@ -56,14 +56,18 @@ def load_model(device: torch.device) -> tuple[Any, Any]:
     # Shim: newer transformers resolves "google/siglip-so400m-patch14-384" to
     # SiglipConfig (full model config) rather than SiglipVisionConfig. The model
     # class expects SiglipVisionConfig, so we extract vision_config before init.
-    _orig_init = AestheticPredictorV2_5Model.__init__
+    # Guard ensures the patch is applied only once even if load_model is called
+    # multiple times (avoids infinite recursion from double-wrapping).
+    if not getattr(AestheticPredictorV2_5Model, "_shim_applied", False):
+        _orig_init = AestheticPredictorV2_5Model.__init__
 
-    def _patched_init(self, config, *args, **kwargs):  # type: ignore[misc]
-        if isinstance(config, SiglipConfig) and hasattr(config, "vision_config"):
-            config = config.vision_config
-        _orig_init(self, config, *args, **kwargs)
+        def _patched_init(self, config, *args, **kwargs):  # type: ignore[misc]
+            if isinstance(config, SiglipConfig) and hasattr(config, "vision_config"):
+                config = config.vision_config
+            _orig_init(self, config, *args, **kwargs)
 
-    AestheticPredictorV2_5Model.__init__ = _patched_init  # type: ignore[method-assign]
+        AestheticPredictorV2_5Model.__init__ = _patched_init  # type: ignore[method-assign]
+        AestheticPredictorV2_5Model._shim_applied = True  # type: ignore[attr-defined]
 
     model, preprocessor = convert_v2_5_from_siglip(
         low_cpu_mem_usage=True,

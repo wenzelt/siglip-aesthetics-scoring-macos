@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from image_classifier.main import scan_images, star_display
+from image_classifier.main import print_summary, scan_images, star_display
 
 
 # --- star_display ---
@@ -143,6 +143,7 @@ def test_main_force_flag_rescores_all_images(tmp_path):
         patch("image_classifier.main.score_image", return_value=7.0) as mock_score,
         patch("image_classifier.main.score_to_rating", return_value=4),
         patch("image_classifier.main.write_rating"),
+        patch("image_classifier.main.write_score_tag"),
         patch("image_classifier.main.upsert"),
         patch("image_classifier.main.all_scores", return_value=[]),
     ):
@@ -175,3 +176,14 @@ def test_main_counts_errors_without_crashing(tmp_path):
     ):
         from image_classifier.main import main
         main()  # Should complete without raising
+
+
+# --- print_summary ---
+
+
+def test_print_summary_handles_out_of_range_rating(tmp_path):
+    """print_summary must not raise KeyError when DB contains an out-of-range rating."""
+    mock_conn = MagicMock()
+    out_of_range_row = {"rating": 0, "path": str(tmp_path / "x.jpg"), "score": 1.0}
+    with patch("image_classifier.main.all_scores", return_value=[out_of_range_row]):
+        print_summary(0, 0, 0, tmp_path, mock_conn)  # must not raise
