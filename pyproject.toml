@@ -5,6 +5,7 @@ requires-python = ">=3.11"
 dependencies = [
     "aesthetic-predictor-v2-5",
     "torch>=2.0",
+    "transformers>=4.30,<5",
     "Pillow",
     "rich",
 ]

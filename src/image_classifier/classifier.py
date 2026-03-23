@@ -45,8 +45,25 @@ def load_model(device: torch.device) -> tuple[Any, Any]:
 
     On first run this downloads the checkpoint (~1.5 GB) to the
     HuggingFace cache at ~/.cache/huggingface.
+
+    Applies a compatibility shim for transformers >= 4.41 where SiglipConfig
+    no longer exposes hidden_size directly (it moved to vision_config.hidden_size).
     """
     from aesthetic_predictor_v2_5 import convert_v2_5_from_siglip  # noqa: PLC0415
+    from aesthetic_predictor_v2_5.siglip_v2_5 import AestheticPredictorV2_5Model  # noqa: PLC0415
+    from transformers.models.siglip.configuration_siglip import SiglipConfig  # noqa: PLC0415
+
+    # Shim: newer transformers resolves "google/siglip-so400m-patch14-384" to
+    # SiglipConfig (full model config) rather than SiglipVisionConfig. The model
+    # class expects SiglipVisionConfig, so we extract vision_config before init.
+    _orig_init = AestheticPredictorV2_5Model.__init__
+
+    def _patched_init(self, config, *args, **kwargs):  # type: ignore[misc]
+        if isinstance(config, SiglipConfig) and hasattr(config, "vision_config"):
+            config = config.vision_config
+        _orig_init(self, config, *args, **kwargs)
+
+    AestheticPredictorV2_5Model.__init__ = _patched_init  # type: ignore[method-assign]
 
     model, preprocessor = convert_v2_5_from_siglip(
         low_cpu_mem_usage=True,
