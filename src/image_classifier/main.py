@@ -18,7 +18,7 @@ from image_classifier.classifier import (
     score_to_rating,
 )
 from image_classifier.database import all_scores, is_processed, make_connection, upsert
-from image_classifier.metadata import MetadataError, check_exiftool, write_rating
+from image_classifier.metadata import MetadataError, check_exiftool, write_rating, write_score_tag
 
 if TYPE_CHECKING:
     import logging
@@ -168,6 +168,7 @@ def main() -> None:
                 score = score_image(path, model, preprocessor, device)
                 rating = score_to_rating(score)
                 write_rating(path, rating)
+                write_score_tag(path, rating, score)
                 upsert(path, score, rating, conn)
                 scored += 1
                 progress.update(

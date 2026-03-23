@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import plistlib
 import shutil
 import subprocess
 from pathlib import Path
@@ -27,3 +28,53 @@ def write_rating(path: Path, rating: int) -> None:
     )
     if result.returncode != 0:
         raise MetadataError(f"exiftool failed for {path}: {result.stderr.strip()}")
+
+
+def _read_finder_tags(path: Path) -> list[str]:
+    """Read existing macOS Finder tags from extended attributes."""
+    result = subprocess.run(
+        ["xattr", "-px", "com.apple.metadata:_kMDItemUserTags", str(path)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return []
+    try:
+        hex_str = result.stdout.strip().replace(" ", "").replace("\n", "")
+        return plistlib.loads(bytes.fromhex(hex_str))
+    except Exception:
+        return []
+
+
+def _is_score_tag(tag: str) -> bool:
+    """Return True if tag looks like a score we previously wrote (★… or bare float)."""
+    if tag.startswith("★"):
+        return True
+    try:
+        val = float(tag)
+        return 0.0 <= val <= 10.0
+    except ValueError:
+        return False
+
+
+def write_score_tag(path: Path, rating: int, score: float) -> None:
+    """Write aesthetic score as macOS Finder tags, preserving user's own tags.
+
+    Writes two tags: a star string (e.g. '★★★★☆') and a numeric score (e.g. '7.3').
+    Any previously written score tags are replaced; other user tags are preserved.
+    """
+    star_tag = "★" * rating + "☆" * (5 - rating)
+    score_tag = f"{score:.1f}"
+
+    existing = _read_finder_tags(path)
+    kept = [t for t in existing if not _is_score_tag(t)]
+    tags = kept + [star_tag, score_tag]
+
+    plist_bytes = plistlib.dumps(tags, fmt=plistlib.FMT_BINARY)
+    result = subprocess.run(
+        ["xattr", "-wx", "com.apple.metadata:_kMDItemUserTags", plist_bytes.hex(), str(path)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise MetadataError(f"xattr failed for {path}: {result.stderr.strip()}")
