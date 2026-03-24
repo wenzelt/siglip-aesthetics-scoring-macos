@@ -88,8 +88,11 @@ def score_image(path: Path, model: Any, preprocessor: Any, device: torch.device)
             # after convert("RGB") (e.g. unusual TIFF/HEIC colorspaces).
             if arr.ndim == 2:
                 arr = np.stack([arr, arr, arr], axis=-1)
-            elif arr.shape[2] != 3:
-                arr = arr[:, :, :3]
+            elif arr.ndim == 3 and arr.shape[2] != 3:
+                if arr.shape[2] < 3:
+                    arr = np.repeat(arr[:, :, :1], 3, axis=-1)
+                else:
+                    arr = arr[:, :, :3]
             image = arr
     except (UnidentifiedImageError, OSError) as exc:
         raise ClassifierError(str(exc)) from exc
