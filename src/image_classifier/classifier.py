@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import torch
 from PIL import Image, UnidentifiedImageError
 
@@ -82,6 +83,14 @@ def score_image(path: Path, model: Any, preprocessor: Any, device: torch.device)
     try:
         with Image.open(path) as img:
             image = img.convert("RGB")
+            arr = np.array(image)
+            # Guard against images that still end up with wrong channel count
+            # after convert("RGB") (e.g. unusual TIFF/HEIC colorspaces).
+            if arr.ndim == 2:
+                arr = np.stack([arr, arr, arr], axis=-1)
+            elif arr.shape[2] != 3:
+                arr = arr[:, :, :3]
+            image = arr
     except (UnidentifiedImageError, OSError) as exc:
         raise ClassifierError(str(exc)) from exc
 
