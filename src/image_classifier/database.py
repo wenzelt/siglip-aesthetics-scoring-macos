@@ -36,8 +36,13 @@ def make_connection(db_path: str | Path = DB_PATH) -> sqlite3.Connection:
     path = Path(db_path)
     if str(path) != ":memory:":  # pathlib.Path(":memory:") stringifies back to ":memory:"
         path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path))
+    conn = sqlite3.connect(str(path), timeout=30)
     conn.row_factory = sqlite3.Row
+    # WAL mode avoids creating a rollback journal file during writes, which
+    # is more resilient when macOS background processes (Spotlight, Time
+    # Machine) briefly lock the database directory.
+    if str(path) != ":memory:":
+        conn.execute("PRAGMA journal_mode=WAL")
     _apply_schema(conn)
     return conn
 

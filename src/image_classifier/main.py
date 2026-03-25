@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
 import time
 from datetime import datetime, timezone
@@ -19,12 +20,11 @@ from image_classifier.classifier import (
     score_image,
     score_to_rating,
 )
-from image_classifier.database import all_scores, all_failures, is_processed, make_connection, upsert, upsert_failure
+from image_classifier.database import DB_PATH, all_scores, all_failures, is_processed, make_connection, upsert, upsert_failure
 from image_classifier.metadata import MetadataError, check_exiftool, write_rating, write_score_tag
 
 if TYPE_CHECKING:
     import logging
-    import sqlite3
 
 LOG_PATH = Path.home() / ".local" / "share" / "image-classifier" / "classify.log"
 
@@ -178,7 +178,8 @@ def main() -> None:
     console.print()
 
     images = scan_images(folder, args.recursive)
-    conn = make_connection()
+    db_path = DB_PATH
+    conn = make_connection(db_path)
 
     to_process = images if args.force else [p for p in images if not is_processed(p, conn)]
     skipped = len(images) - len(to_process)
@@ -206,7 +207,12 @@ def main() -> None:
                 rating = score_to_rating(score)
 
                 t = time.perf_counter()
-                upsert(path, score, rating, conn)
+                try:
+                    upsert(path, score, rating, conn)
+                except sqlite3.OperationalError:
+                    conn.close()
+                    conn = make_connection(db_path)
+                    upsert(path, score, rating, conn)
                 timings.upsert_ms = (time.perf_counter() - t) * 1000
 
                 t = time.perf_counter()
@@ -227,7 +233,15 @@ def main() -> None:
             except Exception as exc:
                 error_str = f"{type(exc).__name__}: {exc}"
                 log_error(logger, path, exc)
-                upsert_failure(path, error_str, conn)
+                try:
+                    upsert_failure(path, error_str, conn)
+                except sqlite3.OperationalError:
+                    try:
+                        conn.close()
+                        conn = make_connection(db_path)
+                        upsert_failure(path, error_str, conn)
+                    except sqlite3.OperationalError:
+                        pass  # DB unavailable; failure already logged to disk
                 errors += 1
                 progress.update(task_id, advance=1)
 

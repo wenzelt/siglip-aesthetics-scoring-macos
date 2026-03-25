@@ -52,6 +52,16 @@ Photos on disk
 
 ## Install
 
+**1. Install uv** (Python package manager):
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+Or via Homebrew: `brew install uv`
+
+**2. Install exiftool and project dependencies:**
+
 ```bash
 brew install exiftool
 uv sync
