@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from image_classifier.database import all_scores, is_processed, make_connection, upsert
+from image_classifier.database import all_failures, all_scores, is_processed, make_connection, upsert, upsert_failure
 
 
 @pytest.fixture
@@ -93,3 +93,58 @@ def test_processed_at_is_iso8601_utc(conn, tmp_path):
     row = conn.execute("SELECT processed_at FROM images").fetchone()
     assert row["processed_at"].endswith("Z")
     assert "T" in row["processed_at"]
+
+
+# --- failures table ---
+
+def test_failures_table_created(conn):
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='failures'"
+    ).fetchone()
+    assert row is not None
+
+
+def test_upsert_failure_stores_path_and_error(conn, tmp_path):
+    img = tmp_path / "bad.jpg"
+    img.touch()
+    upsert_failure(img, "ValueError: mean must have 1 elements", conn)
+    row = conn.execute("SELECT path, error FROM failures WHERE path = ?", (str(img.resolve()),)).fetchone()
+    assert row is not None
+    assert "ValueError" in row["error"]
+
+
+def test_upsert_failure_overwrites_previous_error(conn, tmp_path):
+    img = tmp_path / "bad.jpg"
+    img.touch()
+    upsert_failure(img, "first error", conn)
+    upsert_failure(img, "second error", conn)
+    rows = conn.execute("SELECT error FROM failures WHERE path = ?", (str(img.resolve()),)).fetchall()
+    assert len(rows) == 1
+    assert rows[0]["error"] == "second error"
+
+
+def test_upsert_failure_records_timestamp(conn, tmp_path):
+    img = tmp_path / "bad.jpg"
+    img.touch()
+    upsert_failure(img, "some error", conn)
+    row = conn.execute("SELECT failed_at FROM failures").fetchone()
+    assert row["failed_at"].endswith("Z")
+    assert "T" in row["failed_at"]
+
+
+def test_all_failures_scoped_to_folder(conn, tmp_path):
+    folder_a = tmp_path / "photos"
+    folder_b = tmp_path / "other"
+    folder_a.mkdir()
+    folder_b.mkdir()
+    upsert_failure(folder_a / "a.jpg", "err", conn)
+    upsert_failure(folder_b / "b.jpg", "err", conn)
+    results = all_failures(folder_a, conn)
+    assert len(results) == 1
+    assert "photos" in results[0]["path"]
+
+
+def test_all_failures_returns_empty_when_none(conn, tmp_path):
+    folder = tmp_path / "photos"
+    folder.mkdir()
+    assert all_failures(folder, conn) == []

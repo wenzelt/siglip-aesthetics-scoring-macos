@@ -172,10 +172,67 @@ def test_main_counts_errors_without_crashing(tmp_path):
         patch("image_classifier.main.score_image", side_effect=ClassifierError("bad image")),
         patch("image_classifier.main.write_rating"),
         patch("image_classifier.main.upsert"),
+        patch("image_classifier.main.upsert_failure"),
         patch("image_classifier.main.all_scores", return_value=[]),
     ):
         from image_classifier.main import main
         main()  # Should complete without raising
+
+
+def test_main_survives_unexpected_exception(tmp_path):
+    """Unexpected exceptions (ValueError, RuntimeError, etc.) must not kill the run."""
+    img = tmp_path / "broken.jpg"
+    img.touch()
+
+    mock_conn = _make_mock_conn()
+
+    with (
+        patch("sys.argv", ["classify", str(tmp_path)]),
+        patch("image_classifier.main.check_exiftool"),
+        patch("image_classifier.main.setup_log", return_value=None),
+        patch("image_classifier.main.get_device", return_value=MagicMock()),
+        patch("image_classifier.main.load_model", return_value=(MagicMock(), MagicMock())),
+        patch("image_classifier.main.make_connection", return_value=mock_conn),
+        patch("image_classifier.main.is_processed", return_value=False),
+        patch("image_classifier.main.score_image", side_effect=ValueError("mean must have 1 elements")),
+        patch("image_classifier.main.write_rating"),
+        patch("image_classifier.main.upsert"),
+        patch("image_classifier.main.upsert_failure") as mock_upsert_failure,
+        patch("image_classifier.main.all_scores", return_value=[]),
+    ):
+        from image_classifier.main import main
+        main()  # Must not raise
+
+    mock_upsert_failure.assert_called_once()
+
+
+def test_main_records_failure_in_db(tmp_path):
+    """Failed images are stored in the failures table for later review."""
+    img = tmp_path / "broken.jpg"
+    img.touch()
+
+    mock_conn = _make_mock_conn()
+
+    with (
+        patch("sys.argv", ["classify", str(tmp_path)]),
+        patch("image_classifier.main.check_exiftool"),
+        patch("image_classifier.main.setup_log", return_value=None),
+        patch("image_classifier.main.get_device", return_value=MagicMock()),
+        patch("image_classifier.main.load_model", return_value=(MagicMock(), MagicMock())),
+        patch("image_classifier.main.make_connection", return_value=mock_conn),
+        patch("image_classifier.main.is_processed", return_value=False),
+        patch("image_classifier.main.score_image", side_effect=RuntimeError("CUDA error")),
+        patch("image_classifier.main.write_rating"),
+        patch("image_classifier.main.upsert"),
+        patch("image_classifier.main.upsert_failure") as mock_upsert_failure,
+        patch("image_classifier.main.all_scores", return_value=[]),
+    ):
+        from image_classifier.main import main
+        main()
+
+    args = mock_upsert_failure.call_args
+    assert args[0][0] == img  # first positional arg is the path
+    assert "RuntimeError" in args[0][1]  # error string contains exception type
 
 
 # --- print_summary ---

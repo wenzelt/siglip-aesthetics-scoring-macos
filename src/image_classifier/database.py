@@ -8,13 +8,20 @@ DB_PATH = Path.home() / ".local" / "share" / "image-classifier" / "classify.db"
 
 
 def _apply_schema(conn: sqlite3.Connection) -> None:
-    """Create the images table if it does not exist."""
+    """Create the images and failures tables if they do not exist."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS images (
             path         TEXT PRIMARY KEY,
             score        REAL NOT NULL,
             rating       INTEGER NOT NULL,
             processed_at TEXT NOT NULL
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS failures (
+            path      TEXT PRIMARY KEY,
+            error     TEXT NOT NULL,
+            failed_at TEXT NOT NULL
         )
     """)
     conn.commit()
@@ -52,6 +59,25 @@ def upsert(path: Path, score: float, rating: int, conn: sqlite3.Connection) -> N
         (str(path.resolve()), score, rating, processed_at),
     )
     conn.commit()
+
+
+def upsert_failure(path: Path, error: str, conn: sqlite3.Connection) -> None:
+    """Insert or replace a failure record for an image that could not be scored."""
+    failed_at = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    conn.execute(
+        "INSERT OR REPLACE INTO failures (path, error, failed_at) VALUES (?, ?, ?)",
+        (str(path.resolve()), error, failed_at),
+    )
+    conn.commit()
+
+
+def all_failures(folder: Path, conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Return all failure records whose path is inside folder."""
+    safe_prefix = str(folder.resolve()).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/"
+    return conn.execute(
+        "SELECT path, error, failed_at FROM failures WHERE path LIKE ? ESCAPE '\\'",
+        (safe_prefix + "%",),
+    ).fetchall()
 
 
 def all_scores(folder: Path, conn: sqlite3.Connection) -> list[sqlite3.Row]:

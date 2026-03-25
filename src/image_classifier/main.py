@@ -17,7 +17,7 @@ from image_classifier.classifier import (
     score_image,
     score_to_rating,
 )
-from image_classifier.database import all_scores, is_processed, make_connection, upsert
+from image_classifier.database import all_scores, all_failures, is_processed, make_connection, upsert, upsert_failure
 from image_classifier.metadata import MetadataError, check_exiftool, write_rating, write_score_tag
 
 if TYPE_CHECKING:
@@ -83,8 +83,13 @@ def print_summary(
     console.rule()
     console.print(f"  Scored:  {scored:>4} images")
     console.print(f"  Skipped: {skipped:>4} (already in database)")
-    error_line = f"  Errors:  {errors:>4} (see {LOG_PATH})" if errors else f"  Errors:  {errors:>4}"
-    console.print(error_line)
+    if errors:
+        console.print(f"  Errors:  {errors:>4} (logged to {LOG_PATH} and stored in DB)")
+        failures = all_failures(folder, conn)
+        for row in failures:
+            console.print(f"    [red]✗[/red] {Path(row['path']).name}  {row['error']}")
+    else:
+        console.print(f"  Errors:  {errors:>4}")
 
     rows = all_scores(folder, conn)
     if not rows:
@@ -177,8 +182,10 @@ def main() -> None:
                     advance=1,
                     description=f"{path.name}  {score:.2f}  {star_display(rating)}",
                 )
-            except (ClassifierError, MetadataError, OSError) as exc:
+            except Exception as exc:
+                error_str = f"{type(exc).__name__}: {exc}"
                 log_error(logger, path, exc)
+                upsert_failure(path, error_str, conn)
                 errors += 1
                 progress.update(task_id, advance=1)
 
