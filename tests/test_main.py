@@ -206,6 +206,37 @@ def test_main_survives_unexpected_exception(tmp_path):
     mock_upsert_failure.assert_called_once()
 
 
+def test_upsert_called_even_when_metadata_write_fails(tmp_path):
+    """Score must be saved to DB even if exiftool/xattr fails."""
+    img = tmp_path / "photo.jpg"
+    img.touch()
+
+    mock_conn = _make_mock_conn()
+
+    from image_classifier.metadata import MetadataError
+
+    with (
+        patch("sys.argv", ["classify", str(tmp_path)]),
+        patch("image_classifier.main.check_exiftool"),
+        patch("image_classifier.main.setup_log", return_value=None),
+        patch("image_classifier.main.get_device", return_value=MagicMock()),
+        patch("image_classifier.main.load_model", return_value=(MagicMock(), MagicMock())),
+        patch("image_classifier.main.make_connection", return_value=mock_conn),
+        patch("image_classifier.main.is_processed", return_value=False),
+        patch("image_classifier.main.score_image", return_value=7.0),
+        patch("image_classifier.main.score_to_rating", return_value=4),
+        patch("image_classifier.main.write_rating", side_effect=MetadataError("exiftool failed")),
+        patch("image_classifier.main.write_score_tag"),
+        patch("image_classifier.main.upsert") as mock_upsert,
+        patch("image_classifier.main.upsert_failure"),
+        patch("image_classifier.main.all_scores", return_value=[]),
+    ):
+        from image_classifier.main import main
+        main()
+
+    mock_upsert.assert_called_once()
+
+
 def test_main_records_failure_in_db(tmp_path):
     """Failed images are stored in the failures table for later review."""
     img = tmp_path / "broken.jpg"

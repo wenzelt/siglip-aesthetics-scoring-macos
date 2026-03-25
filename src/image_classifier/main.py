@@ -173,9 +173,9 @@ def main() -> None:
             try:
                 score = score_image(path, model, preprocessor, device)
                 rating = score_to_rating(score)
+                upsert(path, score, rating, conn)
                 write_rating(path, rating)
                 write_score_tag(path, score)
-                upsert(path, score, rating, conn)
                 scored += 1
                 progress.update(
                     task_id,
