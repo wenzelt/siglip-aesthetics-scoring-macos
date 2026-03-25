@@ -9,3 +9,5 @@ build/
 .coverage
 htmlcov/
 02/
+.claude/
+.DS_Store
