@@ -5,7 +5,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from image_classifier.classifier import Timings
 from image_classifier.main import print_summary, scan_images, star_display
+
+_TIMINGS = Timings(load_ms=10.0, preprocess_ms=20.0, infer_ms=500.0)
 
 
 # --- star_display ---
@@ -140,7 +143,7 @@ def test_main_force_flag_rescores_all_images(tmp_path):
         patch("image_classifier.main.load_model", return_value=(MagicMock(), MagicMock())),
         patch("image_classifier.main.make_connection", return_value=mock_conn),
         patch("image_classifier.main.is_processed", return_value=True),
-        patch("image_classifier.main.score_image", return_value=7.0) as mock_score,
+        patch("image_classifier.main.score_image", return_value=(7.0, _TIMINGS)) as mock_score,
         patch("image_classifier.main.score_to_rating", return_value=4),
         patch("image_classifier.main.write_rating"),
         patch("image_classifier.main.write_score_tag"),
@@ -223,7 +226,7 @@ def test_upsert_called_even_when_metadata_write_fails(tmp_path):
         patch("image_classifier.main.load_model", return_value=(MagicMock(), MagicMock())),
         patch("image_classifier.main.make_connection", return_value=mock_conn),
         patch("image_classifier.main.is_processed", return_value=False),
-        patch("image_classifier.main.score_image", return_value=7.0),
+        patch("image_classifier.main.score_image", return_value=(7.0, _TIMINGS)),
         patch("image_classifier.main.score_to_rating", return_value=4),
         patch("image_classifier.main.write_rating", side_effect=MetadataError("exiftool failed")),
         patch("image_classifier.main.write_score_tag"),
@@ -275,3 +278,36 @@ def test_print_summary_handles_out_of_range_rating(tmp_path):
     out_of_range_row = {"rating": 0, "path": str(tmp_path / "x.jpg"), "score": 1.0}
     with patch("image_classifier.main.all_scores", return_value=[out_of_range_row]):
         print_summary(0, 0, 0, tmp_path, mock_conn)  # must not raise
+
+
+# --- --profile flag ---
+
+def test_main_profile_flag_collects_timings(tmp_path):
+    """With --profile, the run completes and timing data is gathered without error."""
+    img = tmp_path / "photo.jpg"
+    img.touch()
+    mock_conn = _make_mock_conn()
+
+    with (
+        patch("sys.argv", ["classify", str(tmp_path), "--profile"]),
+        patch("image_classifier.main.check_exiftool"),
+        patch("image_classifier.main.setup_log", return_value=None),
+        patch("image_classifier.main.get_device", return_value=MagicMock()),
+        patch("image_classifier.main.load_model", return_value=(MagicMock(), MagicMock())),
+        patch("image_classifier.main.make_connection", return_value=mock_conn),
+        patch("image_classifier.main.is_processed", return_value=False),
+        patch("image_classifier.main.score_image", return_value=(7.0, _TIMINGS)),
+        patch("image_classifier.main.score_to_rating", return_value=4),
+        patch("image_classifier.main.write_rating"),
+        patch("image_classifier.main.write_score_tag"),
+        patch("image_classifier.main.upsert"),
+        patch("image_classifier.main.upsert_failure"),
+        patch("image_classifier.main.all_scores", return_value=[]),
+    ):
+        from image_classifier.main import main
+        main()  # must not raise
+
+
+def test_timings_total_includes_all_phases():
+    t = Timings(load_ms=10, preprocess_ms=20, infer_ms=500, upsert_ms=2, exiftool_ms=50, xattr_ms=5)
+    assert abs(t.total_ms - 587.0) < 0.01

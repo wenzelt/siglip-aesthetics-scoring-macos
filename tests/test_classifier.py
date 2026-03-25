@@ -9,6 +9,7 @@ import torch
 from image_classifier.classifier import (
     SUPPORTED_EXTENSIONS,
     ClassifierError,
+    Timings,
     get_device,
     load_model,
     score_image,
@@ -84,7 +85,7 @@ def _make_mock_preprocessor():
     return mock_preprocessor
 
 
-def test_score_image_returns_float(tmp_path):
+def test_score_image_returns_tuple_of_score_and_timings(tmp_path):
     from PIL import Image as PILImage
 
     img_path = tmp_path / "test.jpg"
@@ -94,9 +95,32 @@ def test_score_image_returns_float(tmp_path):
     preprocessor = _make_mock_preprocessor()
     device = torch.device("cpu")
 
-    result = score_image(img_path, model, preprocessor, device)
-    assert isinstance(result, float)
-    assert abs(result - 7.25) < 0.01
+    score, timings = score_image(img_path, model, preprocessor, device)
+    assert isinstance(score, float)
+    assert abs(score - 7.25) < 0.01
+    assert isinstance(timings, Timings)
+
+
+def test_score_image_timings_are_non_negative(tmp_path):
+    from PIL import Image as PILImage
+
+    img_path = tmp_path / "test.jpg"
+    PILImage.new("RGB", (64, 64), color=(128, 128, 128)).save(img_path)
+
+    _, timings = score_image(img_path, _make_mock_model(5.0), _make_mock_preprocessor(), torch.device("cpu"))
+    assert timings.load_ms >= 0
+    assert timings.preprocess_ms >= 0
+    assert timings.infer_ms >= 0
+
+
+def test_score_image_timings_total_matches_sum(tmp_path):
+    from PIL import Image as PILImage
+
+    img_path = tmp_path / "test.jpg"
+    PILImage.new("RGB", (64, 64), color=(128, 128, 128)).save(img_path)
+
+    _, timings = score_image(img_path, _make_mock_model(5.0), _make_mock_preprocessor(), torch.device("cpu"))
+    assert abs(timings.total_ms - (timings.load_ms + timings.preprocess_ms + timings.infer_ms)) < 0.1
 
 
 def test_score_image_raises_classifier_error_for_unreadable_file(tmp_path):

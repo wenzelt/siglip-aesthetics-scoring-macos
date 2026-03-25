@@ -1,11 +1,28 @@
 from __future__ import annotations
 
+import time
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import torch
 from PIL import Image, UnidentifiedImageError
+
+
+@dataclass
+class Timings:
+    """Per-image phase timings in milliseconds."""
+    load_ms: float = 0.0
+    preprocess_ms: float = 0.0
+    infer_ms: float = 0.0
+    upsert_ms: float = 0.0
+    exiftool_ms: float = 0.0
+    xattr_ms: float = 0.0
+
+    @property
+    def total_ms(self) -> float:
+        return self.load_ms + self.preprocess_ms + self.infer_ms + self.upsert_ms + self.exiftool_ms + self.xattr_ms
 
 SUPPORTED_EXTENSIONS: frozenset[str] = frozenset(
     {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp", ".heic", ".bmp"}
@@ -78,8 +95,15 @@ def load_model(device: torch.device) -> tuple[Any, Any]:
     return model, preprocessor
 
 
-def score_image(path: Path, model: Any, preprocessor: Any, device: torch.device) -> float:
-    """Score a single image. Raises ClassifierError if the file is unreadable."""
+def score_image(path: Path, model: Any, preprocessor: Any, device: torch.device) -> tuple[float, Timings]:
+    """Score a single image. Raises ClassifierError if the file is unreadable.
+
+    Returns (score, timings) where timings breaks down milliseconds spent in
+    each phase: load, preprocess, and infer.
+    """
+    timings = Timings()
+
+    t0 = time.perf_counter()
     try:
         with Image.open(path) as img:
             image = img.convert("RGB")
@@ -96,12 +120,19 @@ def score_image(path: Path, model: Any, preprocessor: Any, device: torch.device)
             image = arr
     except (UnidentifiedImageError, OSError) as exc:
         raise ClassifierError(str(exc)) from exc
+    timings.load_ms = (time.perf_counter() - t0) * 1000
 
+    t1 = time.perf_counter()
     pixel_values = (
         preprocessor(images=image, return_tensors="pt")
         .pixel_values.to(torch.bfloat16)
         .to(device)
     )
+    timings.preprocess_ms = (time.perf_counter() - t1) * 1000
+
+    t2 = time.perf_counter()
     with torch.inference_mode():
         score = model(pixel_values).logits.squeeze().float().cpu().numpy()
-    return float(score)
+    timings.infer_ms = (time.perf_counter() - t2) * 1000
+
+    return float(score), timings

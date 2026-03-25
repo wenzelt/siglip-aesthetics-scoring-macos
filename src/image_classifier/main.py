@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -12,6 +13,7 @@ from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, T
 from image_classifier.classifier import (
     SUPPORTED_EXTENSIONS,
     ClassifierError,
+    Timings,
     get_device,
     load_model,
     score_image,
@@ -73,6 +75,33 @@ def star_display(rating: int) -> str:
     return "★" * rating + "☆" * (5 - rating)
 
 
+def print_profile_summary(all_timings: list[Timings]) -> None:
+    """Print a table of mean and max milliseconds per phase."""
+    if not all_timings:
+        return
+    n = len(all_timings)
+    phases = [
+        ("load",       [t.load_ms       for t in all_timings]),
+        ("preprocess", [t.preprocess_ms for t in all_timings]),
+        ("infer",      [t.infer_ms      for t in all_timings]),
+        ("upsert",     [t.upsert_ms     for t in all_timings]),
+        ("exiftool",   [t.exiftool_ms   for t in all_timings]),
+        ("xattr",      [t.xattr_ms      for t in all_timings]),
+        ("total",      [t.total_ms      for t in all_timings]),
+    ]
+    console.print()
+    console.print(f"  [bold]Timing profile[/bold] ({n} images, milliseconds)")
+    console.print(f"  {'phase':<12}  {'mean':>8}  {'max':>8}")
+    console.rule("  ", characters="─")
+    for name, values in phases:
+        mean = sum(values) / n
+        mx = max(values)
+        if name == "total":
+            console.print(f"  [bold]{name:<12}[/bold]  [bold]{mean:>8.1f}[/bold]  [bold]{mx:>8.1f}[/bold]")
+        else:
+            console.print(f"  {name:<12}  {mean:>8.1f}  {mx:>8.1f}")
+
+
 def print_summary(
     scored: int,
     skipped: int,
@@ -116,6 +145,7 @@ def main() -> None:
     parser.add_argument("folder", type=Path, help="Folder of images to classify")
     parser.add_argument("--force", action="store_true", help="Re-score already-processed images")
     parser.add_argument("--recursive", action="store_true", help="Scan subdirectories recursively")
+    parser.add_argument("--profile", action="store_true", help="Show per-phase timing summary after the run")
     args = parser.parse_args()
 
     folder: Path = args.folder.resolve()
@@ -159,6 +189,7 @@ def main() -> None:
 
     scored = 0
     errors = 0
+    all_timings: list[Timings] = []
 
     with Progress(
         BarColumn(),
@@ -171,11 +202,22 @@ def main() -> None:
         for path in to_process:
             progress.update(task_id, description=path.name)
             try:
-                score = score_image(path, model, preprocessor, device)
+                score, timings = score_image(path, model, preprocessor, device)
                 rating = score_to_rating(score)
+
+                t = time.perf_counter()
                 upsert(path, score, rating, conn)
+                timings.upsert_ms = (time.perf_counter() - t) * 1000
+
+                t = time.perf_counter()
                 write_rating(path, rating)
+                timings.exiftool_ms = (time.perf_counter() - t) * 1000
+
+                t = time.perf_counter()
                 write_score_tag(path, score)
+                timings.xattr_ms = (time.perf_counter() - t) * 1000
+
+                all_timings.append(timings)
                 scored += 1
                 progress.update(
                     task_id,
@@ -190,4 +232,6 @@ def main() -> None:
                 progress.update(task_id, advance=1)
 
     print_summary(scored, skipped, errors, folder, conn)
+    if args.profile:
+        print_profile_summary(all_timings)
     conn.close()
