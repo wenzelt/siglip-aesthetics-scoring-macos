@@ -2,7 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from image_classifier.database import all_failures, all_scores, is_processed, make_connection, upsert, upsert_failure
+from image_classifier.database import (
+    all_failures,
+    all_scores,
+    is_processed,
+    make_connection,
+    upsert,
+    upsert_failure,
+)
 
 
 @pytest.fixture
@@ -37,7 +44,9 @@ def test_upsert_stores_correct_values(conn, tmp_path):
     img = tmp_path / "photo.jpg"
     img.touch()
     upsert(img, score=6.1, rating=3, conn=conn)
-    row = conn.execute("SELECT score, rating FROM images WHERE path = ?", (str(img.resolve()),)).fetchone()
+    row = conn.execute(
+        "SELECT score, rating FROM images WHERE path = ?", (str(img.resolve()),)
+    ).fetchone()
     assert abs(row["score"] - 6.1) < 0.001
     assert row["rating"] == 3
 
@@ -47,7 +56,9 @@ def test_upsert_replaces_on_force(conn, tmp_path):
     img.touch()
     upsert(img, score=4.0, rating=2, conn=conn)
     upsert(img, score=8.9, rating=5, conn=conn)
-    row = conn.execute("SELECT score, rating FROM images WHERE path = ?", (str(img.resolve()),)).fetchone()
+    row = conn.execute(
+        "SELECT score, rating FROM images WHERE path = ?", (str(img.resolve()),)
+    ).fetchone()
     assert row["rating"] == 5
 
 
@@ -97,6 +108,7 @@ def test_processed_at_is_iso8601_utc(conn, tmp_path):
 
 # --- failures table ---
 
+
 def test_failures_table_created(conn):
     row = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='failures'"
@@ -108,7 +120,9 @@ def test_upsert_failure_stores_path_and_error(conn, tmp_path):
     img = tmp_path / "bad.jpg"
     img.touch()
     upsert_failure(img, "ValueError: mean must have 1 elements", conn)
-    row = conn.execute("SELECT path, error FROM failures WHERE path = ?", (str(img.resolve()),)).fetchone()
+    row = conn.execute(
+        "SELECT path, error FROM failures WHERE path = ?", (str(img.resolve()),)
+    ).fetchone()
     assert row is not None
     assert "ValueError" in row["error"]
 
@@ -118,7 +132,9 @@ def test_upsert_failure_overwrites_previous_error(conn, tmp_path):
     img.touch()
     upsert_failure(img, "first error", conn)
     upsert_failure(img, "second error", conn)
-    rows = conn.execute("SELECT error FROM failures WHERE path = ?", (str(img.resolve()),)).fetchall()
+    rows = conn.execute(
+        "SELECT error FROM failures WHERE path = ?", (str(img.resolve()),)
+    ).fetchall()
     assert len(rows) == 1
     assert rows[0]["error"] == "second error"
 

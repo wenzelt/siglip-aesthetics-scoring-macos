@@ -19,23 +19,28 @@ from image_classifier.classifier import (
 
 # --- score_to_rating ---
 
-@pytest.mark.parametrize("score,expected_rating", [
-    (1.0, 1),   # well below threshold
-    (3.9, 1),   # just below 4.0
-    (4.0, 2),   # exactly at 4.0 boundary — goes to 2
-    (5.4, 2),   # just below 5.5
-    (5.5, 3),   # exactly at 5.5 boundary — goes to 3
-    (6.9, 3),   # just below 7.0
-    (7.0, 4),   # exactly at 7.0 boundary — goes to 4
-    (8.4, 4),   # just below 8.5
-    (8.5, 5),   # exactly at 8.5 boundary — goes to 5
-    (10.0, 5),  # maximum
-])
+
+@pytest.mark.parametrize(
+    "score,expected_rating",
+    [
+        (1.0, 1),  # well below threshold
+        (3.9, 1),  # just below 4.0
+        (4.0, 2),  # exactly at 4.0 boundary — goes to 2
+        (5.4, 2),  # just below 5.5
+        (5.5, 3),  # exactly at 5.5 boundary — goes to 3
+        (6.9, 3),  # just below 7.0
+        (7.0, 4),  # exactly at 7.0 boundary — goes to 4
+        (8.4, 4),  # just below 8.5
+        (8.5, 5),  # exactly at 8.5 boundary — goes to 5
+        (10.0, 5),  # maximum
+    ],
+)
 def test_score_to_rating_boundaries(score, expected_rating):
     assert score_to_rating(score) == expected_rating
 
 
 # --- get_device ---
+
 
 def test_get_device_returns_mps_when_available():
     with patch("torch.backends.mps.is_available", return_value=True):
@@ -51,6 +56,7 @@ def test_get_device_falls_back_to_cpu():
 
 # --- SUPPORTED_EXTENSIONS ---
 
+
 def test_supported_extensions_are_lowercase():
     for ext in SUPPORTED_EXTENSIONS:
         assert ext == ext.lower()
@@ -60,12 +66,15 @@ def test_supported_extensions_are_lowercase():
 
 # --- score_image ---
 
+
 def _make_mock_model(score_value: float):
     """Return a mock model that produces a fixed score."""
     import numpy as np
 
     mock_output = MagicMock()
-    mock_output.logits.squeeze.return_value.float.return_value.cpu.return_value.numpy.return_value = np.float32(score_value)
+    mock_output.logits.squeeze.return_value.float.return_value.cpu.return_value.numpy.return_value = np.float32(
+        score_value
+    )
 
     mock_model = MagicMock()
     mock_model.return_value = mock_output
@@ -107,7 +116,9 @@ def test_score_image_timings_are_non_negative(tmp_path):
     img_path = tmp_path / "test.jpg"
     PILImage.new("RGB", (64, 64), color=(128, 128, 128)).save(img_path)
 
-    _, timings = score_image(img_path, _make_mock_model(5.0), _make_mock_preprocessor(), torch.device("cpu"))
+    _, timings = score_image(
+        img_path, _make_mock_model(5.0), _make_mock_preprocessor(), torch.device("cpu")
+    )
     assert timings.load_ms >= 0
     assert timings.preprocess_ms >= 0
     assert timings.infer_ms >= 0
@@ -119,8 +130,16 @@ def test_score_image_timings_total_matches_sum(tmp_path):
     img_path = tmp_path / "test.jpg"
     PILImage.new("RGB", (64, 64), color=(128, 128, 128)).save(img_path)
 
-    _, timings = score_image(img_path, _make_mock_model(5.0), _make_mock_preprocessor(), torch.device("cpu"))
-    assert abs(timings.total_ms - (timings.load_ms + timings.preprocess_ms + timings.infer_ms)) < 0.1
+    _, timings = score_image(
+        img_path, _make_mock_model(5.0), _make_mock_preprocessor(), torch.device("cpu")
+    )
+    assert (
+        abs(
+            timings.total_ms
+            - (timings.load_ms + timings.preprocess_ms + timings.infer_ms)
+        )
+        < 0.1
+    )
 
 
 def test_score_image_raises_classifier_error_for_unreadable_file(tmp_path):
@@ -173,10 +192,14 @@ def _make_load_model_mocks():
 
 def test_load_model_shim_not_doubled(monkeypatch):
     """Calling load_model twice must not double-wrap AestheticPredictorV2_5Model.__init__."""
-    fake_ap, fake_siglip_mod, fake_config_mod, FakeAestheticModel = _make_load_model_mocks()
+    fake_ap, fake_siglip_mod, fake_config_mod, FakeAestheticModel = (
+        _make_load_model_mocks()
+    )
 
     monkeypatch.setitem(sys.modules, "aesthetic_predictor_v2_5", fake_ap)
-    monkeypatch.setitem(sys.modules, "aesthetic_predictor_v2_5.siglip_v2_5", fake_siglip_mod)
+    monkeypatch.setitem(
+        sys.modules, "aesthetic_predictor_v2_5.siglip_v2_5", fake_siglip_mod
+    )
     monkeypatch.setitem(
         sys.modules, "transformers.models.siglip.configuration_siglip", fake_config_mod
     )

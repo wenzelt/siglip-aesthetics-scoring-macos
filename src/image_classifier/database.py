@@ -34,7 +34,9 @@ def make_connection(db_path: str | Path = DB_PATH) -> sqlite3.Connection:
     Pass ':memory:' for an in-memory database (useful in tests).
     """
     path = Path(db_path)
-    if str(path) != ":memory:":  # pathlib.Path(":memory:") stringifies back to ":memory:"
+    if (
+        str(path) != ":memory:"
+    ):  # pathlib.Path(":memory:") stringifies back to ":memory:"
         path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path), timeout=30)
     conn.row_factory = sqlite3.Row
@@ -78,7 +80,13 @@ def upsert_failure(path: Path, error: str, conn: sqlite3.Connection) -> None:
 
 def all_failures(folder: Path, conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Return all failure records whose path is inside folder."""
-    safe_prefix = str(folder.resolve()).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/"
+    safe_prefix = (
+        str(folder.resolve())
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+        + "/"
+    )
     return conn.execute(
         "SELECT path, error, failed_at FROM failures WHERE path LIKE ? ESCAPE '\\'",
         (safe_prefix + "%",),
@@ -88,7 +96,13 @@ def all_failures(folder: Path, conn: sqlite3.Connection) -> list[sqlite3.Row]:
 def all_scores(folder: Path, conn: sqlite3.Connection) -> list[sqlite3.Row]:
     """Return all scored images whose path is inside folder (trailing-slash safe)."""
     # Escape LIKE wildcards in the folder path itself, then append the real wildcard.
-    safe_prefix = str(folder.resolve()).replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/"
+    safe_prefix = (
+        str(folder.resolve())
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+        + "/"
+    )
     return conn.execute(
         "SELECT path, score, rating FROM images WHERE path LIKE ? ESCAPE '\\'",
         (safe_prefix + "%",),

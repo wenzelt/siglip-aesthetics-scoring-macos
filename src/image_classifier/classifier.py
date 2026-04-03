@@ -13,6 +13,7 @@ from PIL import Image, UnidentifiedImageError
 @dataclass
 class Timings:
     """Per-image phase timings in milliseconds."""
+
     load_ms: float = 0.0
     preprocess_ms: float = 0.0
     infer_ms: float = 0.0
@@ -22,7 +23,15 @@ class Timings:
 
     @property
     def total_ms(self) -> float:
-        return self.load_ms + self.preprocess_ms + self.infer_ms + self.upsert_ms + self.exiftool_ms + self.xattr_ms
+        return (
+            self.load_ms
+            + self.preprocess_ms
+            + self.infer_ms
+            + self.upsert_ms
+            + self.exiftool_ms
+            + self.xattr_ms
+        )
+
 
 SUPPORTED_EXTENSIONS: frozenset[str] = frozenset(
     {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".webp", ".heic", ".bmp"}
@@ -95,7 +104,9 @@ def load_model(device: torch.device) -> tuple[Any, Any]:
     return model, preprocessor
 
 
-def score_image(path: Path, model: Any, preprocessor: Any, device: torch.device) -> tuple[float, Timings]:
+def score_image(
+    path: Path, model: Any, preprocessor: Any, device: torch.device
+) -> tuple[float, Timings]:
     """Score a single image. Raises ClassifierError if the file is unreadable.
 
     Returns (score, timings) where timings breaks down milliseconds spent in

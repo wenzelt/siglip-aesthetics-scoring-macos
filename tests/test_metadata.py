@@ -27,7 +27,9 @@ def test_check_exiftool_exits_when_missing():
 
 
 def test_check_exiftool_passes_when_present():
-    with patch("image_classifier.metadata.shutil.which", return_value="/usr/local/bin/exiftool"):
+    with patch(
+        "image_classifier.metadata.shutil.which", return_value="/usr/local/bin/exiftool"
+    ):
         check_exiftool()  # Should not raise
 
 
@@ -36,7 +38,9 @@ def test_write_rating_calls_exiftool_with_correct_args(tmp_path):
     img.touch()
     mock_result = MagicMock()
     mock_result.returncode = 0
-    with patch("image_classifier.metadata.subprocess.run", return_value=mock_result) as mock_run:
+    with patch(
+        "image_classifier.metadata.subprocess.run", return_value=mock_result
+    ) as mock_run:
         write_rating(img, rating=4)
     mock_run.assert_called_once()
     call_args = mock_run.call_args[0][0]
@@ -64,7 +68,9 @@ def test_write_rating_all_valid_ratings(tmp_path):
     img.touch()
     mock_result = MagicMock()
     mock_result.returncode = 0
-    with patch("image_classifier.metadata.subprocess.run", return_value=mock_result) as mock_run:
+    with patch(
+        "image_classifier.metadata.subprocess.run", return_value=mock_result
+    ) as mock_run:
         for rating in range(1, 6):
             write_rating(img, rating=rating)
             call_args = mock_run.call_args[0][0]
@@ -225,7 +231,9 @@ def test_read_finder_tags_propagates_unexpected_errors(tmp_path):
     img.touch()
     xattr_ok = MagicMock(returncode=0, stdout="62706c6973743030")
     with patch("image_classifier.metadata.subprocess.run", return_value=xattr_ok):
-        with patch("image_classifier.metadata.plistlib.loads", side_effect=MemoryError("oom")):
+        with patch(
+            "image_classifier.metadata.plistlib.loads", side_effect=MemoryError("oom")
+        ):
             with pytest.raises(MemoryError):
                 _read_finder_tags(img)
 
@@ -265,7 +273,9 @@ def test_write_score_tag_does_not_change_mtime_when_caller_restores(tmp_path):
 
     xattr_fail = MagicMock(returncode=1)
     xattr_ok = MagicMock(returncode=0)
-    with patch("image_classifier.metadata.subprocess.run", side_effect=[xattr_fail, xattr_ok]):
+    with patch(
+        "image_classifier.metadata.subprocess.run", side_effect=[xattr_fail, xattr_ok]
+    ):
         try:
             write_score_tag(img, score=7.5)
         finally:

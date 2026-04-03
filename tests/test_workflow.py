@@ -2,6 +2,7 @@
 TDD tests for the GitHub Actions workflow structure.
 These validate the CI configuration before it ever runs in GitHub.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -9,7 +10,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-WORKFLOW_PATH = Path(__file__).parent.parent / ".github" / "workflows" / "python-app.yml"
+WORKFLOW_PATH = (
+    Path(__file__).parent.parent / ".github" / "workflows" / "python-app.yml"
+)
 
 
 @pytest.fixture(scope="module")
@@ -78,8 +81,9 @@ def test_test_job_uploads_coverage_artifact(workflow):
 def test_test_job_fails_below_coverage_threshold(workflow):
     steps = workflow["jobs"]["test"]["steps"]
     run_cmds = " ".join(s.get("run", "") for s in steps)
-    assert "cov-fail-under" in run_cmds or "fail-under" in run_cmds, \
+    assert "cov-fail-under" in run_cmds or "fail-under" in run_cmds, (
         "Test job must enforce a minimum coverage threshold"
+    )
 
 
 def test_security_job_uses_bandit(workflow):
@@ -91,11 +95,14 @@ def test_security_job_uses_bandit(workflow):
 def test_python_version_is_at_least_311(workflow):
     versions = workflow["jobs"]["test"]["strategy"]["matrix"]["python-version"]
     parsed = [tuple(int(x) for x in str(v).split(".")) for v in versions]
-    assert all(v >= (3, 11) for v in parsed), "All matrix versions must be >= 3.11 (project requirement)"
+    assert all(v >= (3, 11) for v in parsed), (
+        "All matrix versions must be >= 3.11 (project requirement)"
+    )
 
 
 def test_lint_job_checks_formatting(workflow):
     steps = workflow["jobs"]["lint"]["steps"]
     run_cmds = " ".join(s.get("run", "") for s in steps)
-    assert "ruff format" in run_cmds or "ruff check" in run_cmds, \
+    assert "ruff format" in run_cmds or "ruff check" in run_cmds, (
         "Lint job must check code formatting with ruff"
+    )

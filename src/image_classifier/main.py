@@ -10,7 +10,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rich.console import Console
-from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeElapsedColumn
+from rich.progress import (
+    BarColumn,
+    Progress,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
 
 from image_classifier.classifier import (
     SUPPORTED_EXTENSIONS,
@@ -21,8 +27,21 @@ from image_classifier.classifier import (
     score_image,
     score_to_rating,
 )
-from image_classifier.database import DB_PATH, all_scores, all_failures, is_processed, make_connection, upsert, upsert_failure
-from image_classifier.metadata import MetadataError, check_exiftool, write_rating, write_score_tag
+from image_classifier.database import (
+    DB_PATH,
+    all_scores,
+    all_failures,
+    is_processed,
+    make_connection,
+    upsert,
+    upsert_failure,
+)
+from image_classifier.metadata import (
+    MetadataError,
+    check_exiftool,
+    write_rating,
+    write_score_tag,
+)
 
 if TYPE_CHECKING:
     import logging
@@ -82,13 +101,13 @@ def print_profile_summary(all_timings: list[Timings]) -> None:
         return
     n = len(all_timings)
     phases = [
-        ("load",       [t.load_ms       for t in all_timings]),
+        ("load", [t.load_ms for t in all_timings]),
         ("preprocess", [t.preprocess_ms for t in all_timings]),
-        ("infer",      [t.infer_ms      for t in all_timings]),
-        ("upsert",     [t.upsert_ms     for t in all_timings]),
-        ("exiftool",   [t.exiftool_ms   for t in all_timings]),
-        ("xattr",      [t.xattr_ms      for t in all_timings]),
-        ("total",      [t.total_ms      for t in all_timings]),
+        ("infer", [t.infer_ms for t in all_timings]),
+        ("upsert", [t.upsert_ms for t in all_timings]),
+        ("exiftool", [t.exiftool_ms for t in all_timings]),
+        ("xattr", [t.xattr_ms for t in all_timings]),
+        ("total", [t.total_ms for t in all_timings]),
     ]
     console.print()
     console.print(f"  [bold]Timing profile[/bold] ({n} images, milliseconds)")
@@ -98,7 +117,9 @@ def print_profile_summary(all_timings: list[Timings]) -> None:
         mean = sum(values) / n
         mx = max(values)
         if name == "total":
-            console.print(f"  [bold]{name:<12}[/bold]  [bold]{mean:>8.1f}[/bold]  [bold]{mx:>8.1f}[/bold]")
+            console.print(
+                f"  [bold]{name:<12}[/bold]  [bold]{mean:>8.1f}[/bold]  [bold]{mx:>8.1f}[/bold]"
+            )
         else:
             console.print(f"  {name:<12}  {mean:>8.1f}  {mx:>8.1f}")
 
@@ -136,7 +157,9 @@ def print_summary(
     for stars in (5, 4, 3, 2, 1):
         count = buckets[stars]
         bar = "█" * min(count, 30)
-        console.print(f"  {star_display(stars)}  ({labels[stars]:>6})  {count:>4} images  {bar}")
+        console.print(
+            f"  {star_display(stars)}  ({labels[stars]:>6})  {count:>4} images  {bar}"
+        )
 
 
 def main() -> None:
@@ -144,9 +167,17 @@ def main() -> None:
         description="Score images aesthetically and write XMP star ratings."
     )
     parser.add_argument("folder", type=Path, help="Folder of images to classify")
-    parser.add_argument("--force", action="store_true", help="Re-score already-processed images")
-    parser.add_argument("--recursive", action="store_true", help="Scan subdirectories recursively")
-    parser.add_argument("--profile", action="store_true", help="Show per-phase timing summary after the run")
+    parser.add_argument(
+        "--force", action="store_true", help="Re-score already-processed images"
+    )
+    parser.add_argument(
+        "--recursive", action="store_true", help="Scan subdirectories recursively"
+    )
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Show per-phase timing summary after the run",
+    )
     args = parser.parse_args()
 
     folder: Path = args.folder.resolve()
@@ -182,11 +213,15 @@ def main() -> None:
     db_path = DB_PATH
     conn = make_connection(db_path)
 
-    to_process = images if args.force else [p for p in images if not is_processed(p, conn)]
+    to_process = (
+        images if args.force else [p for p in images if not is_processed(p, conn)]
+    )
     skipped = len(images) - len(to_process)
 
     console.print(f"Scanning [bold]{folder}[/bold]")
-    console.print(f"  Found {len(images)} images ({skipped} already scored, {len(to_process)} to process)")
+    console.print(
+        f"  Found {len(images)} images ({skipped} already scored, {len(to_process)} to process)"
+    )
     console.print()
 
     scored = 0

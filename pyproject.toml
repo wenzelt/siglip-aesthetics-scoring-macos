@@ -34,3 +34,5 @@ addopts = "--cov=image_classifier --cov-report=term-missing"
 
 [tool.coverage.run]
 source = ["src/image_classifier"]
+# main.py is the CLI entry point requiring GPU + real files; not testable in CI
+omit = ["src/image_classifier/main.py"]

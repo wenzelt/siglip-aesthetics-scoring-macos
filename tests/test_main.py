@@ -13,6 +13,7 @@ _TIMINGS = Timings(load_ms=10.0, preprocess_ms=20.0, infer_ms=500.0)
 
 # --- star_display ---
 
+
 def test_star_display_one():
     assert star_display(1) == "★☆☆☆☆"
 
@@ -26,6 +27,7 @@ def test_star_display_three():
 
 
 # --- scan_images ---
+
 
 def test_scan_images_returns_supported_extensions(tmp_path):
     (tmp_path / "a.jpg").touch()
@@ -77,6 +79,7 @@ def test_scan_images_case_insensitive_extensions(tmp_path):
 
 # --- CLI integration tests ---
 
+
 def _make_mock_conn():
     conn = MagicMock()
     conn.execute.return_value.fetchone.return_value = None
@@ -89,6 +92,7 @@ def test_main_exits_on_missing_folder(tmp_path):
     with patch("sys.argv", ["classify", str(missing)]):
         with pytest.raises(SystemExit) as exc_info:
             from image_classifier.main import main
+
             main()
     assert exc_info.value.code == 1
 
@@ -99,6 +103,7 @@ def test_main_exits_on_file_instead_of_folder(tmp_path):
     with patch("sys.argv", ["classify", str(f)]):
         with pytest.raises(SystemExit) as exc_info:
             from image_classifier.main import main
+
             main()
     assert exc_info.value.code == 1
 
@@ -115,7 +120,9 @@ def test_main_skips_already_processed_images(tmp_path):
         patch("image_classifier.main.check_exiftool"),
         patch("image_classifier.main.setup_log", return_value=None),
         patch("image_classifier.main.get_device", return_value=MagicMock()),
-        patch("image_classifier.main.load_model", return_value=(MagicMock(), MagicMock())),
+        patch(
+            "image_classifier.main.load_model", return_value=(MagicMock(), MagicMock())
+        ),
         patch("image_classifier.main.make_connection", return_value=mock_conn),
         patch("image_classifier.main.is_processed", return_value=True),
         patch("image_classifier.main.score_image") as mock_score,
@@ -124,6 +131,7 @@ def test_main_skips_already_processed_images(tmp_path):
         patch("image_classifier.main.all_scores", return_value=[]),
     ):
         from image_classifier.main import main
+
         main()
 
     mock_score.assert_not_called()
@@ -140,10 +148,14 @@ def test_main_force_flag_rescores_all_images(tmp_path):
         patch("image_classifier.main.check_exiftool"),
         patch("image_classifier.main.setup_log", return_value=None),
         patch("image_classifier.main.get_device", return_value=MagicMock()),
-        patch("image_classifier.main.load_model", return_value=(MagicMock(), MagicMock())),
+        patch(
+            "image_classifier.main.load_model", return_value=(MagicMock(), MagicMock())
+        ),
         patch("image_classifier.main.make_connection", return_value=mock_conn),
         patch("image_classifier.main.is_processed", return_value=True),
-        patch("image_classifier.main.score_image", return_value=(7.0, _TIMINGS)) as mock_score,
+        patch(
+            "image_classifier.main.score_image", return_value=(7.0, _TIMINGS)
+        ) as mock_score,
         patch("image_classifier.main.score_to_rating", return_value=4),
         patch("image_classifier.main.write_rating"),
         patch("image_classifier.main.write_score_tag"),
@@ -151,6 +163,7 @@ def test_main_force_flag_rescores_all_images(tmp_path):
         patch("image_classifier.main.all_scores", return_value=[]),
     ):
         from image_classifier.main import main
+
         main()
 
     mock_score.assert_called_once()
@@ -169,16 +182,22 @@ def test_main_counts_errors_without_crashing(tmp_path):
         patch("image_classifier.main.check_exiftool"),
         patch("image_classifier.main.setup_log", return_value=None),
         patch("image_classifier.main.get_device", return_value=MagicMock()),
-        patch("image_classifier.main.load_model", return_value=(MagicMock(), MagicMock())),
+        patch(
+            "image_classifier.main.load_model", return_value=(MagicMock(), MagicMock())
+        ),
         patch("image_classifier.main.make_connection", return_value=mock_conn),
         patch("image_classifier.main.is_processed", return_value=False),
-        patch("image_classifier.main.score_image", side_effect=ClassifierError("bad image")),
+        patch(
+            "image_classifier.main.score_image",
+            side_effect=ClassifierError("bad image"),
+        ),
         patch("image_classifier.main.write_rating"),
         patch("image_classifier.main.upsert"),
         patch("image_classifier.main.upsert_failure"),
         patch("image_classifier.main.all_scores", return_value=[]),
     ):
         from image_classifier.main import main
+
         main()  # Should complete without raising
 
 
@@ -194,16 +213,22 @@ def test_main_survives_unexpected_exception(tmp_path):
         patch("image_classifier.main.check_exiftool"),
         patch("image_classifier.main.setup_log", return_value=None),
         patch("image_classifier.main.get_device", return_value=MagicMock()),
-        patch("image_classifier.main.load_model", return_value=(MagicMock(), MagicMock())),
+        patch(
+            "image_classifier.main.load_model", return_value=(MagicMock(), MagicMock())
+        ),
         patch("image_classifier.main.make_connection", return_value=mock_conn),
         patch("image_classifier.main.is_processed", return_value=False),
-        patch("image_classifier.main.score_image", side_effect=ValueError("mean must have 1 elements")),
+        patch(
+            "image_classifier.main.score_image",
+            side_effect=ValueError("mean must have 1 elements"),
+        ),
         patch("image_classifier.main.write_rating"),
         patch("image_classifier.main.upsert"),
         patch("image_classifier.main.upsert_failure") as mock_upsert_failure,
         patch("image_classifier.main.all_scores", return_value=[]),
     ):
         from image_classifier.main import main
+
         main()  # Must not raise
 
     mock_upsert_failure.assert_called_once()
@@ -223,18 +248,24 @@ def test_upsert_called_even_when_metadata_write_fails(tmp_path):
         patch("image_classifier.main.check_exiftool"),
         patch("image_classifier.main.setup_log", return_value=None),
         patch("image_classifier.main.get_device", return_value=MagicMock()),
-        patch("image_classifier.main.load_model", return_value=(MagicMock(), MagicMock())),
+        patch(
+            "image_classifier.main.load_model", return_value=(MagicMock(), MagicMock())
+        ),
         patch("image_classifier.main.make_connection", return_value=mock_conn),
         patch("image_classifier.main.is_processed", return_value=False),
         patch("image_classifier.main.score_image", return_value=(7.0, _TIMINGS)),
         patch("image_classifier.main.score_to_rating", return_value=4),
-        patch("image_classifier.main.write_rating", side_effect=MetadataError("exiftool failed")),
+        patch(
+            "image_classifier.main.write_rating",
+            side_effect=MetadataError("exiftool failed"),
+        ),
         patch("image_classifier.main.write_score_tag"),
         patch("image_classifier.main.upsert") as mock_upsert,
         patch("image_classifier.main.upsert_failure"),
         patch("image_classifier.main.all_scores", return_value=[]),
     ):
         from image_classifier.main import main
+
         main()
 
     mock_upsert.assert_called_once()
@@ -252,16 +283,21 @@ def test_main_records_failure_in_db(tmp_path):
         patch("image_classifier.main.check_exiftool"),
         patch("image_classifier.main.setup_log", return_value=None),
         patch("image_classifier.main.get_device", return_value=MagicMock()),
-        patch("image_classifier.main.load_model", return_value=(MagicMock(), MagicMock())),
+        patch(
+            "image_classifier.main.load_model", return_value=(MagicMock(), MagicMock())
+        ),
         patch("image_classifier.main.make_connection", return_value=mock_conn),
         patch("image_classifier.main.is_processed", return_value=False),
-        patch("image_classifier.main.score_image", side_effect=RuntimeError("CUDA error")),
+        patch(
+            "image_classifier.main.score_image", side_effect=RuntimeError("CUDA error")
+        ),
         patch("image_classifier.main.write_rating"),
         patch("image_classifier.main.upsert"),
         patch("image_classifier.main.upsert_failure") as mock_upsert_failure,
         patch("image_classifier.main.all_scores", return_value=[]),
     ):
         from image_classifier.main import main
+
         main()
 
     args = mock_upsert_failure.call_args
@@ -282,6 +318,7 @@ def test_print_summary_handles_out_of_range_rating(tmp_path):
 
 # --- --profile flag ---
 
+
 def test_main_profile_flag_collects_timings(tmp_path):
     """With --profile, the run completes and timing data is gathered without error."""
     img = tmp_path / "photo.jpg"
@@ -293,7 +330,9 @@ def test_main_profile_flag_collects_timings(tmp_path):
         patch("image_classifier.main.check_exiftool"),
         patch("image_classifier.main.setup_log", return_value=None),
         patch("image_classifier.main.get_device", return_value=MagicMock()),
-        patch("image_classifier.main.load_model", return_value=(MagicMock(), MagicMock())),
+        patch(
+            "image_classifier.main.load_model", return_value=(MagicMock(), MagicMock())
+        ),
         patch("image_classifier.main.make_connection", return_value=mock_conn),
         patch("image_classifier.main.is_processed", return_value=False),
         patch("image_classifier.main.score_image", return_value=(7.0, _TIMINGS)),
@@ -305,9 +344,17 @@ def test_main_profile_flag_collects_timings(tmp_path):
         patch("image_classifier.main.all_scores", return_value=[]),
     ):
         from image_classifier.main import main
+
         main()  # must not raise
 
 
 def test_timings_total_includes_all_phases():
-    t = Timings(load_ms=10, preprocess_ms=20, infer_ms=500, upsert_ms=2, exiftool_ms=50, xattr_ms=5)
+    t = Timings(
+        load_ms=10,
+        preprocess_ms=20,
+        infer_ms=500,
+        upsert_ms=2,
+        exiftool_ms=50,
+        xattr_ms=5,
+    )
     assert abs(t.total_ms - 587.0) < 0.01

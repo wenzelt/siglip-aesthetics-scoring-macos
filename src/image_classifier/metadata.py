@@ -73,7 +73,13 @@ def write_score_tag(path: Path, score: float) -> None:
 
     plist_bytes = plistlib.dumps(tags, fmt=plistlib.FMT_BINARY)
     result = subprocess.run(
-        ["xattr", "-wx", "com.apple.metadata:_kMDItemUserTags", plist_bytes.hex(), str(path)],
+        [
+            "xattr",
+            "-wx",
+            "com.apple.metadata:_kMDItemUserTags",
+            plist_bytes.hex(),
+            str(path),
+        ],
         capture_output=True,
         text=True,
         timeout=_SUBPROCESS_TIMEOUT,
