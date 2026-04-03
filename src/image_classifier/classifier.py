@@ -8,6 +8,9 @@ from typing import Any
 import numpy as np
 import torch
 from PIL import Image, UnidentifiedImageError
+from pillow_heif import register_heif_opener
+
+register_heif_opener()
 
 
 @dataclass

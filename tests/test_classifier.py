@@ -216,3 +216,68 @@ def test_load_model_shim_not_doubled(monkeypatch):
     assert init_after_first is init_after_second, (
         "load_model applied the shim twice — second call double-wrapped __init__"
     )
+
+
+# --- HEIC support ---
+
+
+def _write_heic_fixture(path) -> None:
+    """Write a minimal real HEIC file to *path* using pillow_heif."""
+    import pillow_heif
+    from PIL import Image as PILImage
+
+    pil_img = PILImage.new("RGB", (16, 16), color=(255, 0, 128))
+    pillow_heif.from_pillow(pil_img).save(path)
+
+
+@pytest.mark.heic
+def test_score_image_heic_raises_without_registration(tmp_path):
+    """score_image must raise ClassifierError when PIL cannot identify the HEIC file.
+
+    This is the RED anchor: it reproduces the exact error from the bug report —
+    PIL.Image.open raises UnidentifiedImageError on a .heic path when
+    pillow_heif has not been registered. We simulate that condition by
+    patching Image.open inside the classifier module to raise the same error
+    that Pillow raises in production without the HEIF opener.
+    """
+    from PIL import UnidentifiedImageError as _UIE
+
+    heic_path = tmp_path / "fixture.heic"
+    _write_heic_fixture(heic_path)
+
+    model = _make_mock_model(5.0)
+    preprocessor = _make_mock_preprocessor()
+    device = torch.device("cpu")
+
+    # Simulate the production failure: Image.open raises UnidentifiedImageError
+    # as it does when pillow_heif is not imported/registered.
+    def _fake_open(path, *args, **kwargs):
+        raise _UIE(f"cannot identify image file '{path}'")
+
+    with patch("image_classifier.classifier.Image.open", side_effect=_fake_open):
+        with pytest.raises(ClassifierError, match="cannot identify image file"):
+            score_image(heic_path, model, preprocessor, device)
+
+
+@pytest.mark.heic
+def test_score_image_heic_succeeds_with_registration(tmp_path):
+    """score_image must open and score a HEIC file when register_heif_opener() is active.
+
+    This is the GREEN proof: importing image_classifier.classifier already calls
+    register_heif_opener() at module level, so PIL.Image.open() handles HEIC.
+    The test creates a real HEIC fixture (no mocking of the image load) and
+    confirms score_image returns a valid (float, Timings) pair.
+    """
+    heic_path = tmp_path / "fixture.heic"
+    _write_heic_fixture(heic_path)
+
+    model = _make_mock_model(6.5)
+    preprocessor = _make_mock_preprocessor()
+    device = torch.device("cpu")
+
+    score, timings = score_image(heic_path, model, preprocessor, device)
+
+    assert isinstance(score, float), "score_image must return a float score"
+    assert abs(score - 6.5) < 0.01, f"expected ~6.5, got {score}"
+    assert isinstance(timings, Timings), "score_image must return a Timings instance"
+    assert timings.load_ms >= 0, "load_ms must be non-negative"

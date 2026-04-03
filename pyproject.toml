@@ -7,6 +7,7 @@ dependencies = [
     "torch>=2.0",
     "transformers>=4.30,<5",
     "Pillow",
+    "pillow-heif>=0.18",
     "rich",
 ]
 
@@ -31,6 +32,9 @@ packages = ["src/image_classifier"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "--cov=image_classifier --cov-report=term-missing"
+markers = [
+    "heic: tests requiring pillow-heif and HEIC image support",
+]
 
 [tool.coverage.run]
 source = ["src/image_classifier"]
