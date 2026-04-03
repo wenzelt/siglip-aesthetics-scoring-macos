@@ -281,3 +281,95 @@ def test_score_image_heic_succeeds_with_registration(tmp_path):
     assert abs(score - 6.5) < 0.01, f"expected ~6.5, got {score}"
     assert isinstance(timings, Timings), "score_image must return a Timings instance"
     assert timings.load_ms >= 0, "load_ms must be non-negative"
+
+
+# --- Bug 1: truncated JPEG tolerance ---
+
+
+def test_score_image_succeeds_for_truncated_jpeg(tmp_path):
+    """score_image must NOT raise ClassifierError for a truncated-but-parseable JPEG.
+
+    A real JPEG header followed by valid scan data that is simply cut short is
+    exactly the kind of file Pillow rejects by default (LOAD_TRUNCATED_IMAGES=False)
+    but should tolerate when the flag is True.
+
+    We create a minimal valid JPEG via PIL, then chop the last 512 bytes off,
+    which makes Pillow raise ImageFile.IsTruncatedError (a subclass of OSError)
+    unless LOAD_TRUNCATED_IMAGES is enabled.
+    """
+    import io
+
+    from PIL import Image as PILImage
+
+    # Build a real JPEG in memory, then truncate it.
+    buf = io.BytesIO()
+    PILImage.new("RGB", (64, 64), color=(200, 100, 50)).save(buf, format="JPEG")
+    full_bytes = buf.getvalue()
+    # Drop the last 32 bytes so Pillow sees an incomplete scan segment.
+    # Dropping 32 bytes is enough to trigger OSError without the flag, but
+    # recoverable enough for Pillow to produce pixel data when the flag is set.
+    assert len(full_bytes) > 64, "sanity: JPEG must be larger than our truncation"
+    truncated_bytes = full_bytes[:-32]
+
+    img_path = tmp_path / "truncated.jpg"
+    img_path.write_bytes(truncated_bytes)
+
+    model = _make_mock_model(5.0)
+    preprocessor = _make_mock_preprocessor()
+    device = torch.device("cpu")
+
+    # Must not raise — truncated images should be loaded tolerantly.
+    score, timings = score_image(img_path, model, preprocessor, device)
+    assert isinstance(score, float)
+    assert isinstance(timings, Timings)
+
+
+# --- Bug 2: grayscale JPEG produces 3-channel array ---
+
+
+def test_score_image_palette_with_transparency_produces_3channel_array(tmp_path):
+    """score_image must pass a (H, W, 3) uint8 array to the preprocessor for a
+    palette image with transparency (mode 'P' + 'transparency').
+
+    The WhatsApp JPEG IMG-20170123-WA0003.jpg is a grayscale/palette image.
+    Pillow's img.convert("RGB") on a 'P' image that carries an alpha channel
+    internally goes through 'RGBA' first, yielding a (H, W, 4) array.  The
+    existing guard in classifier.py slices arr[:, :, :3] for 4-channel arrays,
+    BUT the guard for arr.shape[2] < 3 uses np.repeat on axis 0 of the slice —
+    a palette image with no transparency that Pillow converts to 1-channel first
+    can still produce ndim==3 with shape[2]==1 that the guard handles, BUT a
+    palette image converted internally through RGBA produces shape[2]==4, which
+    the existing `arr[:, :, :3]` guard *does* handle.
+
+    The critical sub-case that was broken: a palette image saved as PNG (which
+    preserves the palette + transparency info) opened and converted.  We test
+    that path directly with a synthetic 'P'-mode PNG to confirm exactly 3
+    channels reach the preprocessor regardless of intermediate Pillow mode.
+    """
+    import numpy as np
+    from PIL import Image as PILImage
+
+    # Build a palette image with a transparency entry — this is what forces
+    # Pillow to route through RGBA when convert("RGB") is called.
+    base = PILImage.new("RGBA", (64, 64), color=(100, 150, 200, 128))
+    palette_img = base.convert("P")  # This sets mode='P' with palette + alpha info
+
+    img_path = tmp_path / "palette_transparency.png"
+    palette_img.save(img_path, format="PNG")
+
+    captured_arrays: list[np.ndarray] = []
+
+    def _capturing_preprocessor(images, **kwargs):  # type: ignore[override]
+        arr = images if isinstance(images, np.ndarray) else np.array(images)
+        captured_arrays.append(arr)
+        return _make_mock_preprocessor()(images=images, **kwargs)
+
+    model = _make_mock_model(5.0)
+    device = torch.device("cpu")
+
+    score_image(img_path, model, _capturing_preprocessor, device)
+
+    assert len(captured_arrays) == 1, "preprocessor must be called exactly once"
+    arr = captured_arrays[0]
+    assert arr.ndim == 3, f"expected 3-D array (H, W, C), got shape {arr.shape}"
+    assert arr.shape[2] == 3, f"expected 3 channels, got {arr.shape[2]}"

@@ -7,10 +7,16 @@ from typing import Any
 
 import numpy as np
 import torch
-from PIL import Image, UnidentifiedImageError
+from PIL import Image, ImageFile, UnidentifiedImageError
 from pillow_heif import register_heif_opener
 
 register_heif_opener()
+
+# Allow Pillow to load images whose scan data is slightly truncated rather than
+# raising OSError("image file is truncated").  This tolerates real-world JPEGs
+# (e.g. WhatsApp exports) that are structurally valid but missing a few bytes at
+# the end of the compressed scan segment.
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 
 @dataclass
