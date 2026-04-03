@@ -164,3 +164,22 @@ def test_all_failures_returns_empty_when_none(conn, tmp_path):
     folder = tmp_path / "photos"
     folder.mkdir()
     assert all_failures(folder, conn) == []
+
+
+def test_upsert_clears_failure_record_on_success(conn, tmp_path):
+    """A successful upsert must remove any pre-existing failures row for that path."""
+    img = tmp_path / "retry.jpg"
+    img.touch()
+    upsert_failure(img, "OSError: file unreadable", conn)
+    # Confirm the failure row exists before the retry
+    row = conn.execute(
+        "SELECT 1 FROM failures WHERE path = ?", (str(img.resolve()),)
+    ).fetchone()
+    assert row is not None, "pre-condition: failure row should exist before upsert"
+
+    upsert(img, score=7.5, rating=4, conn=conn)
+
+    leftover = conn.execute(
+        "SELECT 1 FROM failures WHERE path = ?", (str(img.resolve()),)
+    ).fetchone()
+    assert leftover is None, "upsert() must delete the failures row for a successfully scored image"

@@ -65,6 +65,7 @@ def upsert(path: Path, score: float, rating: int, conn: sqlite3.Connection) -> N
         "INSERT OR REPLACE INTO images (path, score, rating, processed_at) VALUES (?, ?, ?, ?)",
         (str(path.resolve()), score, rating, processed_at),
     )
+    conn.execute("DELETE FROM failures WHERE path = ?", (str(path.resolve()),))
     conn.commit()
 
 
