@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import plistlib
 import subprocess
+import time
 from pathlib import Path
 from unittest.mock import MagicMock, call, patch
 
@@ -226,3 +228,47 @@ def test_read_finder_tags_propagates_unexpected_errors(tmp_path):
         with patch("image_classifier.metadata.plistlib.loads", side_effect=MemoryError("oom")):
             with pytest.raises(MemoryError):
                 _read_finder_tags(img)
+
+
+# --- mtime preservation ---
+
+
+def test_write_rating_does_not_change_mtime_when_caller_restores(tmp_path):
+    """Verify that the os.utime restore pattern used in main.py preserves mtime."""
+    img = tmp_path / "photo.jpg"
+    img.touch()
+    # Set a known mtime in the past so any write is detectable
+    past_ns = img.stat().st_mtime_ns - 10_000_000_000  # 10 seconds ago
+    os.utime(img, ns=(img.stat().st_atime_ns, past_ns))
+
+    original_mtime_ns = img.stat().st_mtime_ns
+
+    mock_result = MagicMock(returncode=0)
+    with patch("image_classifier.metadata.subprocess.run", return_value=mock_result):
+        original_atime_ns = img.stat().st_atime_ns
+        try:
+            write_rating(img, rating=3)
+        finally:
+            os.utime(img, ns=(img.stat().st_atime_ns, original_mtime_ns))
+
+    assert img.stat().st_mtime_ns == original_mtime_ns
+
+
+def test_write_score_tag_does_not_change_mtime_when_caller_restores(tmp_path):
+    """Verify that the os.utime restore pattern used in main.py preserves mtime."""
+    img = tmp_path / "photo.jpg"
+    img.touch()
+    past_ns = img.stat().st_mtime_ns - 10_000_000_000
+    os.utime(img, ns=(img.stat().st_atime_ns, past_ns))
+
+    original_mtime_ns = img.stat().st_mtime_ns
+
+    xattr_fail = MagicMock(returncode=1)
+    xattr_ok = MagicMock(returncode=0)
+    with patch("image_classifier.metadata.subprocess.run", side_effect=[xattr_fail, xattr_ok]):
+        try:
+            write_score_tag(img, score=7.5)
+        finally:
+            os.utime(img, ns=(img.stat().st_atime_ns, original_mtime_ns))
+
+    assert img.stat().st_mtime_ns == original_mtime_ns

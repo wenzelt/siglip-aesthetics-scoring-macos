@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sqlite3
 import sys
 import time
@@ -215,13 +216,17 @@ def main() -> None:
                     upsert(path, score, rating, conn)
                 timings.upsert_ms = (time.perf_counter() - t) * 1000
 
-                t = time.perf_counter()
-                write_rating(path, rating)
-                timings.exiftool_ms = (time.perf_counter() - t) * 1000
+                original_mtime_ns = path.stat().st_mtime_ns
+                try:
+                    t = time.perf_counter()
+                    write_rating(path, rating)
+                    timings.exiftool_ms = (time.perf_counter() - t) * 1000
 
-                t = time.perf_counter()
-                write_score_tag(path, score)
-                timings.xattr_ms = (time.perf_counter() - t) * 1000
+                    t = time.perf_counter()
+                    write_score_tag(path, score)
+                    timings.xattr_ms = (time.perf_counter() - t) * 1000
+                finally:
+                    os.utime(path, ns=(path.stat().st_atime_ns, original_mtime_ns))
 
                 all_timings.append(timings)
                 scored += 1
