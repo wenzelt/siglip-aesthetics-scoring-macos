@@ -128,14 +128,14 @@ def score_image(
                     arr = np.repeat(arr[:, :, :1], 3, axis=-1)
                 else:
                     arr = arr[:, :, :3]
-            image = arr
+            image_array = arr
     except (UnidentifiedImageError, OSError) as exc:
         raise ClassifierError(str(exc)) from exc
     timings.load_ms = (time.perf_counter() - t0) * 1000
 
     t1 = time.perf_counter()
     pixel_values = (
-        preprocessor(images=image, return_tensors="pt")
+        preprocessor(images=image_array, return_tensors="pt")
         .pixel_values.to(torch.bfloat16)
         .to(device)
     )
