@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import os
 import plistlib
-import subprocess
-import time
-from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -253,7 +250,6 @@ def test_write_rating_does_not_change_mtime_when_caller_restores(tmp_path):
 
     mock_result = MagicMock(returncode=0)
     with patch("image_classifier.metadata.subprocess.run", return_value=mock_result):
-        original_atime_ns = img.stat().st_atime_ns
         try:
             write_rating(img, rating=3)
         finally:

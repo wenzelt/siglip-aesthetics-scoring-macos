@@ -20,7 +20,6 @@ from rich.progress import (
 
 from image_classifier.classifier import (
     SUPPORTED_EXTENSIONS,
-    ClassifierError,
     Timings,
     get_device,
     load_model,
@@ -37,7 +36,6 @@ from image_classifier.database import (
     upsert_failure,
 )
 from image_classifier.metadata import (
-    MetadataError,
     check_exiftool,
     write_rating,
     write_score_tag,
