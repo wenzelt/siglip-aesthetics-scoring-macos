@@ -178,6 +178,33 @@ def test_main_profile_flag_collects_timings(tmp_path):
         main()  # must not raise
 
 
+def test_main_handles_keyboard_interrupt(tmp_path):
+    """If the user presses Ctrl+C, the app should exit gracefully and print a summary."""
+    img = tmp_path / "photo.jpg"
+    img.touch()
+    mock_conn = _make_mock_conn()
+
+    with (
+        patch("sys.argv", ["classify", str(tmp_path)]),
+        patch("image_classifier.main.check_exiftool"),
+        patch("image_classifier.main.setup_logger", return_value=None),
+        patch("image_classifier.main.get_device", return_value=MagicMock()),
+        patch(
+            "image_classifier.main.load_model", return_value=(MagicMock(), MagicMock())
+        ),
+        patch("image_classifier.main.make_connection", return_value=mock_conn),
+        patch("image_classifier.main.is_processed", return_value=False),
+        patch("image_classifier.processor.ImageProcessor.process_image", side_effect=KeyboardInterrupt),
+        patch("image_classifier.main.print_summary") as mock_summary,
+        patch("image_classifier.main.all_scores", return_value=[]),
+    ):
+        from image_classifier.main import main
+
+        main()
+
+    assert mock_summary.called
+
+
 def test_timings_total_includes_all_phases():
     t = Timings(
         load_ms=10,

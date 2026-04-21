@@ -5,12 +5,16 @@ import sys
 from pathlib import Path
 
 from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 from rich.progress import (
     BarColumn,
     Progress,
     TaskProgressColumn,
     TextColumn,
     TimeElapsedColumn,
+    MofNCompleteColumn,
+    SpinnerColumn,
 )
 
 from image_classifier.classifier import (
@@ -44,27 +48,31 @@ def print_profile_summary(all_timings: list[Timings]) -> None:
         return
     n = len(all_timings)
     phases = [
-        ("load", [t.load_ms for t in all_timings]),
-        ("preprocess", [t.preprocess_ms for t in all_timings]),
-        ("infer", [t.infer_ms for t in all_timings]),
-        ("upsert", [t.upsert_ms for t in all_timings]),
-        ("exiftool", [t.exiftool_ms for t in all_timings]),
-        ("xattr", [t.xattr_ms for t in all_timings]),
-        ("total", [t.total_ms for t in all_timings]),
+        ("Load", [t.load_ms for t in all_timings]),
+        ("Preprocess", [t.preprocess_ms for t in all_timings]),
+        ("Infer", [t.infer_ms for t in all_timings]),
+        ("Upsert", [t.upsert_ms for t in all_timings]),
+        ("Exiftool", [t.exiftool_ms for t in all_timings]),
+        ("Xattr", [t.xattr_ms for t in all_timings]),
+        ("Total", [t.total_ms for t in all_timings]),
     ]
-    console.print()
-    console.print(f"  [bold]Timing profile[/bold] ({n} images, milliseconds)")
-    console.print(f"  {'phase':<12}  {'mean':>8}  {'max':>8}")
-    console.rule("  ", characters="─")
+    
+    table = Table(title=f"Timing Profile ({n} images)", box=None, padding=(0, 2))
+    table.add_column("Phase", style="cyan")
+    table.add_column("Mean (ms)", justify="right", style="magenta")
+    table.add_column("Max (ms)", justify="right", style="magenta")
+
     for name, values in phases:
         mean = sum(values) / n
         mx = max(values)
-        if name == "total":
-            console.print(
-                f"  [bold]{name:<12}[/bold]  [bold]{mean:>8.1f}[/bold]  [bold]{mx:>8.1f}[/bold]"
-            )
+        if name == "Total":
+            table.add_section()
+            table.add_row(f"[bold]{name}[/bold]", f"[bold]{mean:.1f}[/bold]", f"[bold]{mx:.1f}[/bold]")
         else:
-            console.print(f"  {name:<12}  {mean:>8.1f}  {mx:>8.1f}")
+            table.add_row(name, f"{mean:.1f}", f"{mx:.1f}")
+
+    console.print()
+    console.print(Panel(table, expand=False, border_style="dim", title="⏱️ Timings"))
 
 
 def print_summary(
@@ -74,35 +82,63 @@ def print_summary(
     folder: Path,
     conn: any,
 ) -> None:
-    console.rule()
-    console.print(f"  Scored:  {scored:>4} images")
-    console.print(f"  Skipped: {skipped:>4} (already in database)")
-    if errors:
-        console.print(f"  Errors:  {errors:>4} (logged to {LOG_PATH} and stored in DB)")
-        failures = all_failures(folder, conn)
-        for row in failures:
-            console.print(f"    [red]✗[/red] {Path(row['path']).name}  {row['error']}")
-    else:
-        console.print(f"  Errors:  {errors:>4}")
-
     rows = all_scores(folder, conn)
+    
+    # Summary Table
+    summary_table = Table(box=None, padding=(0, 2))
+    summary_table.add_row("🖼️  Scored", f"[bold]{scored:>4}[/bold] images")
+    summary_table.add_row("⏭️  Skipped", f"[dim]{skipped:>4}[/dim] (already in database)")
+    
+    if errors:
+        summary_table.add_row("❌  Errors", f"[red]{errors:>4}[/red] (logged to {LOG_PATH})")
+    else:
+        summary_table.add_row("✅  Errors", f"[green]{errors:>4}[/green]")
+    
+    console.print()
+    console.print(Panel(summary_table, expand=False, title="📊 Summary", border_style="blue"))
+
+    if errors:
+        failures = all_failures(folder, conn)
+        if failures:
+            error_list = Table(box=None, header_style="bold red")
+            error_list.add_column("File")
+            error_list.add_column("Error")
+            for row in failures:
+                error_list.add_row(Path(row['path']).name, f"[red]{row['error']}[/red]")
+            console.print(Panel(error_list, title="Recent Failures", border_style="red", expand=False))
+
     if not rows:
         return
 
-    console.print()
     buckets: dict[int, int] = {5: 0, 4: 0, 3: 0, 2: 0, 1: 0}
     for row in rows:
         if row["rating"] in buckets:
             buckets[row["rating"]] += 1
 
     labels = {5: "8.5+", 4: "7–8.5", 3: "5.5–7", 2: "4–5.5", 1: "<4"}
-    console.print("  Distribution:")
+    
+    dist_table = Table(title="Rating Distribution", box=None, padding=(0, 1))
+    dist_table.add_column("Rating", justify="left")
+    dist_table.add_column("Score Range", justify="right", style="dim")
+    dist_table.add_column("Count", justify="right")
+    dist_table.add_column("Bar", justify="left")
+
+    colors = {5: "green", 4: "green", 3: "yellow", 2: "orange3", 1: "red"}
+
     for stars in (5, 4, 3, 2, 1):
         count = buckets[stars]
         bar = "█" * min(count, 30)
-        console.print(
-            f"  {star_display(stars)}  ({labels[stars]:>6})  {count:>4} images  {bar}"
+        if count > 30:
+            bar += "+"
+        dist_table.add_row(
+            star_display(stars),
+            f"({labels[stars]})",
+            str(count),
+            f"[{colors[stars]}]{bar}[/]"
         )
+
+    console.print()
+    console.print(Panel(dist_table, expand=False, title="📈 Distribution", border_style="cyan"))
 
 
 def main() -> None:
@@ -136,22 +172,26 @@ def main() -> None:
     check_exiftool()
     logger = setup_logger()
 
-    console.rule("Image Classifier")
-    console.print(
-        "Note: On first run the model checkpoint (~1.5 GB) will be downloaded "
-        "to ~/.cache/huggingface. Subsequent runs use the cache."
-    )
-    console.print("Loading model...", end=" ")
-
-    device = get_device()
-    if device.type == "cpu":
-        console.print("[yellow][CPU — MPS not available][/yellow]")
-    else:
-        console.print(f"[green][{device.type.upper()}][/green]")
-
-    model, preprocessor = load_model(device)
+    # Header Panel
+    header = Table(box=None, padding=(0, 1))
+    header.add_column(justify="left")
+    header.add_row("[bold cyan]Image Classifier[/bold cyan]")
+    header.add_row("[dim]Score images aesthetically and write XMP star ratings[/dim]")
+    
+    console.print(Panel(header, border_style="cyan", expand=False))
+    
+    console.print("[dim]Note: On first run the model (~1.5 GB) will be downloaded to ~/.cache/huggingface.[/dim]")
+    
     console.print()
+    with console.status("[bold blue]Loading aesthetic model...", spinner="dots"):
+        device = get_device()
+        device_color = "green" if device.type != "cpu" else "yellow"
+        device_label = device.type.upper()
+        
+        model, preprocessor = load_model(device)
+        console.print(f"✨ Model loaded on [{device_color}]{device_label}[/{device_color}]")
 
+    console.print()
     images = scan_images(folder, args.recursive)
     db_path = DB_PATH
     conn = make_connection(db_path)
@@ -161,10 +201,12 @@ def main() -> None:
     )
     skipped = len(images) - len(to_process)
 
-    console.print(f"Scanning [bold]{folder}[/bold]")
-    console.print(
-        f"  Found {len(images)} images ({skipped} already scored, {len(to_process)} to process)"
-    )
+    scan_table = Table(box=None, padding=(0, 2))
+    scan_table.add_row("📂 Folder", f"[bold]{folder}[/bold]")
+    scan_table.add_row("🖼️  Total", f"{len(images)} images")
+    scan_table.add_row("🔍 Scanned", f"{skipped} already scored, [bold cyan]{len(to_process)}[/bold cyan] to process")
+    
+    console.print(Panel(scan_table, title="Scanning Info", border_style="dim", expand=False))
     console.print()
 
     processor = ImageProcessor(model, preprocessor, device, conn, db_path)
@@ -172,34 +214,42 @@ def main() -> None:
     errors = 0
     all_timings: list[Timings] = []
 
-    with Progress(
-        BarColumn(),
-        TaskProgressColumn(),
-        TextColumn("{task.description}"),
-        TimeElapsedColumn(),
-        console=console,
-    ) as progress:
-        task_id = progress.add_task("", total=len(to_process))
-        for path in to_process:
-            progress.update(task_id, description=path.name)
+    try:
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            MofNCompleteColumn(),
+            TimeElapsedColumn(),
+            console=console,
+            refresh_per_second=10,
+        ) as progress:
+            task_id = progress.add_task("[cyan]Processing images...", total=len(to_process))
+            for path in to_process:
+                progress.update(task_id, description=f"[cyan]Processing: [bold]{path.name}[/bold]")
 
-            def progress_callback(p: Path, s: float, r: int) -> None:
-                progress.update(
-                    task_id,
-                    advance=1,
-                    description=f"{p.name}  {s:.2f}  {star_display(r)}",
-                )
+                def progress_callback(p: Path, s: float, r: int) -> None:
+                    # Update task description with the result of the last processed image
+                    progress.update(
+                        task_id,
+                        advance=1,
+                        description=f"Last: {p.name}  [bold yellow]{s:.2f}[/]  {star_display(r)}",
+                    )
 
-            try:
-                score, timings = processor.process_image(path, progress_callback)
-                all_timings.append(timings)
-                scored += 1
-            except Exception as exc:
-                error_str = f"{type(exc).__name__}: {exc}"
-                log_error(logger, path, exc)
-                processor.handle_failure(path, error_str)
-                errors += 1
-                progress.update(task_id, advance=1)
+                try:
+                    score, timings = processor.process_image(path, progress_callback)
+                    all_timings.append(timings)
+                    scored += 1
+                except Exception as exc:
+                    error_str = f"{type(exc).__name__}: {exc}"
+                    log_error(logger, path, exc)
+                    processor.handle_failure(path, error_str)
+                    errors += 1
+                    progress.update(task_id, advance=1)
+    except KeyboardInterrupt:
+        console.print()
+        console.print("[yellow]⚠️  Interrupt received. Partial results saved.[/yellow]")
 
     print_summary(scored, skipped, errors, folder, processor.conn)
     if args.profile:
