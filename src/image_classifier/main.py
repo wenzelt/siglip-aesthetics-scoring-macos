@@ -1,13 +1,8 @@
 from __future__ import annotations
 
 import argparse
-import os
-import sqlite3
 import sys
-import time
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from rich.console import Console
 from rich.progress import (
@@ -19,12 +14,9 @@ from rich.progress import (
 )
 
 from image_classifier.classifier import (
-    SUPPORTED_EXTENSIONS,
     Timings,
     get_device,
     load_model,
-    score_image,
-    score_to_rating,
 )
 from image_classifier.database import (
     DB_PATH,
@@ -32,60 +24,13 @@ from image_classifier.database import (
     all_failures,
     is_processed,
     make_connection,
-    upsert,
-    upsert_failure,
 )
-from image_classifier.metadata import (
-    check_exiftool,
-    write_rating,
-    write_score_tag,
-)
-
-if TYPE_CHECKING:
-    import logging
-
-LOG_PATH = Path.home() / ".local" / "share" / "image-classifier" / "classify.log"
+from image_classifier.metadata import check_exiftool
+from image_classifier.logging_utils import LOG_PATH, setup_logger, log_error
+from image_classifier.scanner import scan_images
+from image_classifier.processor import ImageProcessor
 
 console = Console()
-
-
-def setup_log() -> logging.Logger | None:
-    """Open the append-mode log file. Returns None if it cannot be opened."""
-    import logging
-
-    logger = logging.getLogger("classify")
-    if logger.handlers:
-        return logger
-    logger.setLevel(logging.ERROR)
-    try:
-        LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        handler = logging.FileHandler(str(LOG_PATH), mode="a")
-        handler.setFormatter(logging.Formatter("%(message)s"))
-        logger.addHandler(handler)
-        return logger
-    except OSError:
-        print(f"Warning: could not open log file at {LOG_PATH}", file=sys.stderr)
-        return None
-
-
-def log_error(logger: logging.Logger | None, path: Path, exc: Exception) -> None:
-    """Write a tab-separated error line to the log."""
-    if logger is None:
-        return
-    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    logger.error("%s\t%s\t%s: %s", timestamp, path, type(exc).__name__, exc)
-
-
-def scan_images(folder: Path, recursive: bool) -> list[Path]:
-    """Return all supported image files in folder, skipping hidden paths."""
-    glob_fn = folder.rglob if recursive else folder.glob
-    return [
-        path
-        for path in glob_fn("*")
-        if path.is_file()
-        and not any(part.startswith(".") for part in path.parts)
-        and path.suffix.lower() in SUPPORTED_EXTENSIONS
-    ]
 
 
 def star_display(rating: int) -> str:
@@ -127,7 +72,7 @@ def print_summary(
     skipped: int,
     errors: int,
     folder: Path,
-    conn: sqlite3.Connection,
+    conn: any,
 ) -> None:
     console.rule()
     console.print(f"  Scored:  {scored:>4} images")
@@ -189,7 +134,7 @@ def main() -> None:
         sys.exit(1)
 
     check_exiftool()
-    logger = setup_log()
+    logger = setup_logger()
 
     console.rule("Image Classifier")
     console.print(
@@ -222,6 +167,7 @@ def main() -> None:
     )
     console.print()
 
+    processor = ImageProcessor(model, preprocessor, device, conn, db_path)
     scored = 0
     errors = 0
     all_timings: list[Timings] = []
@@ -236,54 +182,30 @@ def main() -> None:
         task_id = progress.add_task("", total=len(to_process))
         for path in to_process:
             progress.update(task_id, description=path.name)
-            try:
-                score, timings = score_image(path, model, preprocessor, device)
-                rating = score_to_rating(score)
 
-                t = time.perf_counter()
-                try:
-                    upsert(path, score, rating, conn)
-                except sqlite3.OperationalError:
-                    conn.close()
-                    conn = make_connection(db_path)
-                    upsert(path, score, rating, conn)
-                timings.upsert_ms = (time.perf_counter() - t) * 1000
-
-                original_mtime_ns = path.stat().st_mtime_ns
-                try:
-                    t = time.perf_counter()
-                    write_rating(path, rating)
-                    timings.exiftool_ms = (time.perf_counter() - t) * 1000
-
-                    t = time.perf_counter()
-                    write_score_tag(path, score)
-                    timings.xattr_ms = (time.perf_counter() - t) * 1000
-                finally:
-                    os.utime(path, ns=(path.stat().st_atime_ns, original_mtime_ns))
-
-                all_timings.append(timings)
-                scored += 1
+            def progress_callback(p: Path, s: float, r: int) -> None:
                 progress.update(
                     task_id,
                     advance=1,
-                    description=f"{path.name}  {score:.2f}  {star_display(rating)}",
+                    description=f"{p.name}  {s:.2f}  {star_display(r)}",
                 )
+
+            try:
+                score, timings = processor.process_image(path, progress_callback)
+                all_timings.append(timings)
+                scored += 1
             except Exception as exc:
                 error_str = f"{type(exc).__name__}: {exc}"
                 log_error(logger, path, exc)
-                try:
-                    upsert_failure(path, error_str, conn)
-                except sqlite3.OperationalError:
-                    try:
-                        conn.close()
-                        conn = make_connection(db_path)
-                        upsert_failure(path, error_str, conn)
-                    except sqlite3.OperationalError:
-                        pass  # DB unavailable; failure already logged to disk
+                processor.handle_failure(path, error_str)
                 errors += 1
                 progress.update(task_id, advance=1)
 
-    print_summary(scored, skipped, errors, folder, conn)
+    print_summary(scored, skipped, errors, folder, processor.conn)
     if args.profile:
         print_profile_summary(all_timings)
-    conn.close()
+    processor.conn.close()
+
+
+if __name__ == "__main__":
+    main()
