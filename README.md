@@ -1,5 +1,7 @@
 # image-classifier
 
+[**🌐 View Project Page**](https://wenzelt.github.io/image-classifier/)
+
 > Score every photo in your library aesthetically. Writes XMP star ratings directly into image metadata so macOS Finder sorts your best shots to the top — automatically.
 
 Built on [aesthetic-predictor-v2-5](https://github.com/discus0434/aesthetic-predictor-v2-5) (SigLIP-based, 1–10 scale). Optimised for Apple Silicon (MPS).

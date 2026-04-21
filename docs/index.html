@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Image Classifier | Aesthetic Scoring for Large Libraries</title>
+    <meta name="description" content="Score every photo in your library aesthetically. SigLIP-based aesthetic scoring for 100,000+ images.">
+    <link rel="stylesheet" href="style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+</head>
+<body>
+    <header>
+        <nav>
+            <div class="logo">
+                <img src="assets/logo.svg" alt="Logo" width="32" height="32">
+                <span class="text">Image Classifier</span>
+            </div>
+            <ul>
+                <li><a href="#features">Features</a></li>
+                <li><a href="#how-it-works">How it works</a></li>
+                <li><a href="#install">Install</a></li>
+                <li><a href="https://github.com/wenzelt/image-classifier" class="github-link">GitHub</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        <section class="hero">
+            <div class="container">
+                <div class="badge">Built for Scale • Powered by SigLIP</div>
+                <h1>Find your best shots,<br><span class="highlight">automatically.</span></h1>
+                <p class="story">
+                    "I was tired of sifting through 1000s of images to find good ones. I wanted to use a software shortcut. So I use a <strong>SigLIP model by Google</strong> to do aesthetic scoring directly in Finder using tags and EXIF stars. I have <strong>100,000 images</strong> but who ever looks at them again? So I automated it."
+                </p>
+                <div class="cta-group">
+                    <a href="#install" class="btn btn-primary">Get Started</a>
+                    <a href="https://github.com/wenzelt/image-classifier" class="btn btn-secondary">View on GitHub</a>
+                </div>
+            </div>
+        </section>
+
+        <section id="features" class="features">
+            <div class="container">
+                <h2 class="section-title">Everything you need</h2>
+                <div class="feature-grid">
+                    <div class="feature-card">
+                        <div class="feature-icon">🧠</div>
+                        <h3>AI-Powered Scoring</h3>
+                        <p>Uses the <strong>aesthetic-predictor-v2-5</strong> model (SigLIP-based) to score images on a 1–10 scale. Optimized for Apple Silicon (MPS).</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">📂</div>
+                        <h3>Finder Integration</h3>
+                        <p>Writes XMP star ratings and Finder tags directly to your files. Sort by rating in macOS Finder to see your best shots first.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">⚡</div>
+                        <h3>Built for Speed</h3>
+                        <p>Scans 100,000+ images efficiently. Resumable across runs thanks to a robust SQLite cache. Skips already-scored images.</p>
+                    </div>
+                    <div class="feature-card">
+                        <div class="feature-icon">🛡️</div>
+                        <h3>Safety First</h3>
+                        <p>Persists scores to SQLite <em>before</em> writing metadata. A crash or error never loses a result. Failures are logged for review.</p>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="how-it-works" class="how-it-works">
+            <div class="container">
+                <h2 class="section-title">How it works</h2>
+                <div class="steps">
+                    <div class="step">
+                        <div class="step-num">01</div>
+                        <div class="step-content">
+                            <h4>Scan</h4>
+                            <p>Scans your photo library for supported formats: <code>.jpg</code>, <code>.png</code>, <code>.heic</code>, and more.</p>
+                        </div>
+                    </div>
+                    <div class="step">
+                        <div class="step-num">02</div>
+                        <div class="step-content">
+                            <h4>Score</h4>
+                            <p>Processes images through the SigLIP model on your GPU (MPS) or CPU to get an aesthetic score.</p>
+                        </div>
+                    </div>
+                    <div class="step">
+                        <div class="step-num">03</div>
+                        <div class="step-content">
+                            <h4>Write</h4>
+                            <p>Embeds XMP Star Ratings (1–5 ★) and numeric Finder tags into the image metadata using <code>exiftool</code>.</p>
+                        </div>
+                    </div>
+                    <div class="step">
+                        <div class="step-num">04</div>
+                        <div class="step-content">
+                            <h4>Sort</h4>
+                            <p>Open Folder → View as List → Sort by Rating. Your best shots are at the top, instantly.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="install" class="install">
+            <div class="container">
+                <h2 class="section-title">Get Started</h2>
+                <div class="install-steps">
+                    <div class="install-step">
+                        <h5>1. Clone the repository</h5>
+                        <pre><code>git clone https://github.com/wenzelt/image-classifier
+cd image-classifier</code></pre>
+                    </div>
+                    <div class="install-step">
+                        <h5>2. Install uv & exiftool</h5>
+                        <pre><code>brew install uv exiftool</code></pre>
+                    </div>
+                    <div class="install-step">
+                        <h5>3. Sync & Run</h5>
+                        <pre><code>uv sync
+uv run classify ~/Photos/vacation</code></pre>
+                    </div>
+                </div>
+                <div class="output-preview">
+                    <div class="preview-header">
+                        <span class="dot red"></span>
+                        <span class="dot yellow"></span>
+                        <span class="dot green"></span>
+                        <span class="title">Terminal — uv run classify</span>
+                    </div>
+                    <div class="preview-body">
+                        <pre><code>Loading model... [MPS]
+Scanning /Volumes/Data/Photos
+Found 47482 images (17818 already scored)
+
+████████████████████████████████████  100%
+
+Distribution:
+★★★★★  ( 8.5+)   1823 images  ████████████████████
+★★★★☆  (7–8.5)   9412 images  ██████████████████████████████
+★★★☆☆  (5.5–7)  18901 images  ██████████████████████████████</code></pre>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <div class="container">
+            <p>&copy; 2026 wenzelt • Built with SigLIP & ❤️</p>
+            <div class="footer-links">
+                <a href="https://github.com/wenzelt/image-classifier">GitHub</a>
+                <a href="https://github.com/discus0434/aesthetic-predictor-v2-5">Aesthetic Predictor v2.5</a>
+            </div>
+        </div>
+    </footer>
+</body>
+</html>

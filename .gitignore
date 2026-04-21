@@ -11,3 +11,5 @@ htmlcov/
 02/
 .claude/
 .DS_Store
+.gemini/
+gha-creds-*.json
