@@ -1,196 +1,136 @@
-# image-classifier
+# 🖼️ Image Classifier
 
 [**🌐 View Project Page**](https://wenzelt.github.io/image-classifier/)
 
-> Score every photo in your library aesthetically. Writes XMP star ratings directly into image metadata so macOS Finder sorts your best shots to the top — automatically.
-
-Built on [aesthetic-predictor-v2-5](https://github.com/discus0434/aesthetic-predictor-v2-5) (SigLIP-based, 1–10 scale). Optimised for Apple Silicon (MPS).
+> **Stop sifting, start seeing.** Automatically score every photo in your library for aesthetic quality. Writes XMP star ratings directly to metadata so macOS Finder sorts your best shots to the top — instantly.
 
 ---
 
-## How it works
+## 📖 The Story
 
+"I was tired of sifting through thousands of images to find the gems. I wanted a software shortcut. I have over 100,000 images, but who ever looks at them again? So I automated it. Now, I use a **SigLIP model by Google** to score aesthetics directly in Finder using tags and EXIF stars."
+
+---
+
+## ✨ Key Features
+
+- **🧠 State-of-the-Art AI**: Uses the `aesthetic-predictor-v2-5` model (SigLIP-based) to score images on a nuanced 1–10 scale.
+- **🍎 Apple Silicon Optimized**: Fully supports **MPS (Metal Performance Shaders)** for lightning-fast inference on Mac M1/M2/M3 chips.
+- **📂 Finder Integration**: Beyond metadata, it applies native macOS Finder tags (e.g., "7.4") and standard XMP Star Ratings.
+- **⚡ Built for Scale**: 
+  - **SQLite Caching**: Skips already-scored images for near-instant resumes.
+  - **Recursive Scanning**: Process entire folder hierarchies in one go.
+  - **Atomic Persistence**: Scores are saved to SQLite *before* metadata writing, ensuring no data loss on crash.
+- **🛡️ Robust & Reliable**: Handles truncated JPEGs, unusual colorspaces, and provides a detailed failure log for unreadable files.
+- **⏱️ Performance Profiling**: Use the `--profile` flag to see exactly where your time goes (Load vs. Inference vs. Writing).
+
+---
+
+## 🛠️ How it Works
+
+```mermaid
+graph TD
+    A[Photos on Disk] --> B[PIL Decode]
+    B --> C[SigLIP Preprocessor]
+    C --> D[Aesthetic Model]
+    D --> E[Aesthetic Score 1-10]
+    E --> F{Persistence}
+    F --> G[SQLite Cache]
+    F --> H[XMP:Rating Stars]
+    F --> I[Finder xattr Tags]
 ```
-Photos on disk
-      │
-      ▼
-  PIL decode  ──▶  SigLIP preprocessor  ──▶  Aesthetic model  ──▶  Score (1–10)
-                                                                          │
-                        ┌─────────────────────────────────────────────────┘
-                        ▼
-              SQLite cache          XMP:Rating (exiftool)       Finder tag (xattr)
-        ~/.local/share/…/classify.db   embedded in file          visible in Finder
-```
 
-1. Scans a folder (optionally recursive) for supported image formats
-2. Skips files already in the SQLite cache (resumable across runs)
-3. Scores each image with the SigLIP aesthetic model on MPS/CPU
-4. Persists the score to SQLite **before** writing metadata — so a crash or exiftool failure never loses a result
-5. Writes an XMP star rating (1–5 ★) and a numeric Finder tag (e.g. `7.3`) to each file
-6. Any per-image failure is caught, logged, and stored in a `failures` table — the run continues
+1. **Scan**: Identifies all supported images (`.jpg`, `.png`, `.heic`, `.webp`, etc.).
+2. **Score**: Runs the image through the SigLIP model on your GPU/CPU.
+3. **Persist**: Saves the raw score and timestamp to a local SQLite database.
+4. **Tag**: Updates the file's metadata using `exiftool` and macOS `xattr`.
 
 ---
 
-## Star rating scale
+## 📊 Star Rating Scale
 
-| Score  | Stars   | Label         |
-|--------|---------|---------------|
-| 8.5–10 | ★★★★★ | Exceptional   |
-| 7–8.5  | ★★★★☆ | Great         |
-| 5.5–7  | ★★★☆☆ | Good          |
-| 4–5.5  | ★★☆☆☆ | Below average |
-| < 4    | ★☆☆☆☆ | Poor          |
+We map the 1–10 aesthetic score to a standard 1–5 star system:
 
----
-
-## Requirements
-
-- macOS (Finder integration) or Linux (scores only)
-- Python ≥ 3.11
-- [uv](https://github.com/astral-sh/uv)
-- [exiftool](https://exiftool.org/)
+| Score | Stars | Label | Finder Experience |
+| :--- | :--- | :--- | :--- |
+| **8.5 – 10** | ★★★★★ | Exceptional | The absolute best of your library. |
+| **7.0 – 8.5** | ★★★★☆ | Great | High-quality shots worth keeping. |
+| **5.5 – 7.0** | ★★★☆☆ | Good | Decent photos, standard quality. |
+| **4.0 – 5.5** | ★★☆☆☆ | Below Average | Might be blurry or poorly composed. |
+| **< 4.0** | ★☆☆☆☆ | Poor | Safe to archive or delete. |
 
 ---
 
-## Install
+## 🚀 Installation
 
-**1. Install uv** (Python package manager):
+### 1. Requirements
+- **macOS** (for Finder tags) or **Linux** (for metadata scoring).
+- **Python ≥ 3.11**
+- [**uv**](https://github.com/astral-sh/uv) (Fast Python package manager)
+- [**exiftool**](https://exiftool.org/) (For metadata writing)
 
+### 2. Setup
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
+# Install dependencies
+brew install uv exiftool
 
-Or via Homebrew: `brew install uv`
-
-**2. Install exiftool and project dependencies:**
-
-```bash
-brew install exiftool
+# Clone and sync
+git clone https://github.com/wenzelt/image-classifier
+cd image-classifier
 uv sync
 ```
 
-First run downloads the model checkpoint (~1.5 GB) to `~/.cache/huggingface`. Subsequent runs use the cache.
-
 ---
 
-## Usage
+## 📖 Usage
 
+### Basic Scoring
+Score a single folder (skips images already in the database):
 ```bash
-# Score all images in a folder (skips already-scored)
-uv run classify ~/Photos/vacation
+uv run classify ~/Pictures/Vacation
+```
 
-# Include subdirectories
-uv run classify ~/Photos --recursive
+### Advanced Options
+```bash
+# Process subfolders recursively
+uv run classify ~/Pictures --recursive
 
 # Re-score everything (overwrites existing ratings)
-uv run classify ~/Photos/vacation --force
+uv run classify ~/Pictures --force
+
+# Show performance profiling after the run
+uv run classify ~/Pictures --profile
 ```
 
-### Example output
-
-```
-──────────────────── Image Classifier ────────────────────
-Note: On first run the model checkpoint (~1.5 GB) will be
-downloaded to ~/.cache/huggingface. Subsequent runs use the cache.
-Loading model... [MPS]
-
-Scanning /Volumes/Data/Nextcloud/Photos
-  Found 47482 images (17818 already scored, 29664 to process)
-
-████████████████████████████████████  100% IMG_9823.HEIC  0:42:17
-
-──────────────────────────────────────────────────────────
-  Scored:   29664 images
-  Skipped:  17818 (already in database)
-  Errors:       3 (logged to ~/.local/share/image-classifier/classify.log)
-
-  Distribution:
-  ★★★★★  ( 8.5+)   1823 images  ████████████████████
-  ★★★★☆  (7–8.5)   9412 images  ██████████████████████████████
-  ★★★☆☆  (5.5–7)  18901 images  ██████████████████████████████
-  ★★☆☆☆  (4–5.5)  11203 images  ██████████████████████████████
-  ★☆☆☆☆  (  <4)    6143 images  █████████████████
-```
+### View Results in Finder
+1. Open your folder in **Finder**.
+2. Switch to **List View** (`Cmd + 2`).
+3. Right-click the column header and enable **Rating**.
+4. Click the **Rating** column to sort descending.
 
 ---
 
-## Sort in Finder
+## 📂 Project Structure
 
-After running: open folder in Finder → **View → as List** → right-click the column header → enable **Rating**. Sort descending to see your best shots first.
-
----
-
-## Supported formats
-
-`.jpg` · `.jpeg` · `.png` · `.tiff` · `.tif` · `.webp` · `.heic` · `.bmp`
-
----
-
-## Data files
-
-| Path | Contents |
-|------|----------|
-| `~/.local/share/image-classifier/classify.db` | SQLite cache — `images` table (scores) + `failures` table (errors for review) |
-| `~/.local/share/image-classifier/classify.log` | Error log, tab-separated, append mode |
-
-### Review failures
-
-```bash
-sqlite3 ~/.local/share/image-classifier/classify.db \
-  "SELECT path, error, failed_at FROM failures ORDER BY failed_at DESC"
-```
+- `src/image_classifier/`
+  - `classifier.py`: Model loading and SigLIP inference logic.
+  - `metadata.py`: `exiftool` and `xattr` bridge.
+  - `database.py`: SQLite persistence layer.
+  - `scanner.py`: Efficient file system crawler.
+  - `main.py`: Rich CLI interface and progress tracking.
 
 ---
 
-## Development
+## 🛡️ Data & Privacy
 
-### Setup
+All processing is **100% local**. No images are ever uploaded to the cloud.
+- **Database**: `~/.local/share/image-classifier/classify.db`
+- **Logs**: `~/.local/share/image-classifier/classify.log`
 
-```bash
-uv sync
-```
+---
 
-### Run tests
+## 🙏 Acknowledgments
 
-```bash
-uv run pytest
-```
-
-```
-................................................................   [100%]
-================================ tests coverage ================================
-
-Name                              Stmts   Miss  Cover
------------------------------------------------------
-image_classifier/__init__.py          0      0   100%
-image_classifier/classifier.py       55      7    87%
-image_classifier/database.py         34      1    97%
-image_classifier/main.py            115     19    83%
-image_classifier/metadata.py         38      2    95%
------------------------------------------------------
-TOTAL                               242     29    88%
-
-64 passed in 1.01s
-```
-
-### Project layout
-
-```
-src/image_classifier/
-├── classifier.py   # model loading, image scoring, score→rating mapping
-├── database.py     # SQLite helpers (images + failures tables)
-├── main.py         # CLI entrypoint, progress loop, summary
-└── metadata.py     # exiftool (XMP rating) + xattr (Finder tag) writers
-tests/
-├── test_classifier.py
-├── test_database.py
-├── test_main.py
-└── test_metadata.py
-```
-
-### Lint & type-check
-
-```bash
-uv run ruff check src/
-uv run mypy src/
-```
+- [**aesthetic-predictor-v2-5**](https://github.com/discus0434/aesthetic-predictor-v2-5) for the excellent SigLIP-based model.
+- [**Google SigLIP**](https://huggingface.co/docs/transformers/model_doc/siglip) for the underlying vision transformer.
+- [**exiftool**](https://exiftool.org/) for being the gold standard of metadata manipulation.
