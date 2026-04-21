@@ -1,32 +1,32 @@
-# 🖼️ Image Classifier
+# Image Classifier
 
-[**🌐 View Project Page**](https://wenzelt.github.io/image-classifier/)
+[**View Project Page**](https://wenzelt.github.io/image-classifier/)
 
-> **Stop sifting, start seeing.** Automatically score every photo in your library for aesthetic quality. Writes XMP star ratings directly to metadata so macOS Finder sorts your best shots to the top — instantly.
+> **Stop sifting, start seeing.** Automatically score every photo in your library for aesthetic quality. Writes XMP star ratings directly into metadata so macOS Finder sorts your best shots to the top — instantly.
 
 ---
 
-## 📖 The Story
+## The Story
 
 "I was tired of sifting through thousands of images to find the gems. I wanted a software shortcut. I have over 100,000 images, but who ever looks at them again? So I automated it. Now, I use a **SigLIP model by Google** to score aesthetics directly in Finder using tags and EXIF stars."
 
 ---
 
-## ✨ Key Features
+## Key Features
 
-- **🧠 State-of-the-Art AI**: Uses the `aesthetic-predictor-v2-5` model (SigLIP-based) to score images on a nuanced 1–10 scale.
-- **🍎 Apple Silicon Optimized**: Fully supports **MPS (Metal Performance Shaders)** for lightning-fast inference on Mac M1/M2/M3 chips.
-- **📂 Finder Integration**: Beyond metadata, it applies native macOS Finder tags (e.g., "7.4") and standard XMP Star Ratings.
-- **⚡ Built for Scale**: 
+- **State-of-the-Art AI**: Uses the `aesthetic-predictor-v2-5` model (SigLIP-based) to score images on a nuanced 1–10 scale.
+- **Apple Silicon Optimized**: Fully supports **MPS (Metal Performance Shaders)** for lightning-fast inference on Mac M1/M2/M3 chips.
+- **Finder Integration**: Beyond metadata, it applies native macOS Finder tags (e.g., "7.4") and standard XMP Star Ratings.
+- **Built for Scale**: 
   - **SQLite Caching**: Skips already-scored images for near-instant resumes.
   - **Recursive Scanning**: Process entire folder hierarchies in one go.
   - **Atomic Persistence**: Scores are saved to SQLite *before* metadata writing, ensuring no data loss on crash.
-- **🛡️ Robust & Reliable**: Handles truncated JPEGs, unusual colorspaces, and provides a detailed failure log for unreadable files.
-- **⏱️ Performance Profiling**: Use the `--profile` flag to see exactly where your time goes (Load vs. Inference vs. Writing).
+- **Robust & Reliable**: Handles truncated JPEGs, unusual colorspaces, and provides a detailed failure log for unreadable files.
+- **Performance Profiling**: Use the `--profile` flag to see exactly where your time goes (Load vs. Inference vs. Writing).
 
 ---
 
-## 🛠️ How it Works
+## How it Works
 
 ```mermaid
 graph TD
@@ -47,7 +47,7 @@ graph TD
 
 ---
 
-## 📊 Star Rating Scale
+## Star Rating Scale
 
 We map the 1–10 aesthetic score to a standard 1–5 star system:
 
@@ -61,7 +61,7 @@ We map the 1–10 aesthetic score to a standard 1–5 star system:
 
 ---
 
-## 🚀 Installation
+## Installation
 
 ### 1. Requirements
 - **macOS** (for Finder tags) or **Linux** (for metadata scoring).
@@ -82,7 +82,7 @@ uv sync
 
 ---
 
-## 📖 Usage
+## Usage
 
 ### Basic Scoring
 Score a single folder (skips images already in the database):
@@ -110,7 +110,7 @@ uv run classify ~/Pictures --profile
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 - `src/image_classifier/`
   - `classifier.py`: Model loading and SigLIP inference logic.
@@ -121,7 +121,7 @@ uv run classify ~/Pictures --profile
 
 ---
 
-## 🛡️ Data & Privacy
+## Data & Privacy
 
 All processing is **100% local**. No images are ever uploaded to the cloud.
 - **Database**: `~/.local/share/image-classifier/classify.db`
@@ -129,7 +129,7 @@ All processing is **100% local**. No images are ever uploaded to the cloud.
 
 ---
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - [**aesthetic-predictor-v2-5**](https://github.com/discus0434/aesthetic-predictor-v2-5) for the excellent SigLIP-based model.
 - [**Google SigLIP**](https://huggingface.co/docs/transformers/model_doc/siglip) for the underlying vision transformer.
