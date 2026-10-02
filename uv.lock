@@ -359,6 +359,7 @@ version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "aesthetic-predictor-v2-5" },
+    { name = "numpy" },
     { name = "pillow" },
     { name = "pillow-heif" },
     { name = "rich" },
@@ -377,6 +378,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "aesthetic-predictor-v2-5" },
+    { name = "numpy" },
     { name = "pillow" },
     { name = "pillow-heif", specifier = ">=0.18" },
     { name = "rich" },

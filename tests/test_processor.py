@@ -58,7 +58,7 @@ def test_process_image_restores_mtime(mock_processor, tmp_path):
     assert img.stat().st_mtime_ns == original_mtime
 
 
-def test_upsert_called_even_when_metadata_write_fails(mock_processor, tmp_path):
+def test_upsert_not_called_when_metadata_write_fails(mock_processor, tmp_path):
     img = tmp_path / "photo.jpg"
     img.touch()
 
@@ -74,9 +74,8 @@ def test_upsert_called_even_when_metadata_write_fails(mock_processor, tmp_path):
         with pytest.raises(MetadataError):
             mock_processor.process_image(img)
 
-    # In my current implementation of ImageProcessor.process_image,
-    # the upsert is called BEFORE write_rating.
-    mock_upsert.assert_called_once()
+    # A failed metadata write must not leave a "processed" row behind.
+    mock_upsert.assert_not_called()
 
 
 def test_safe_upsert_retries_on_operational_error(mock_processor, tmp_path):
@@ -87,8 +86,13 @@ def test_safe_upsert_retries_on_operational_error(mock_processor, tmp_path):
     mock_processor.conn.execute.side_effect = [sqlite3.OperationalError("dead"), None]
 
     with (
-        patch("image_classifier.processor.upsert", side_effect=[sqlite3.OperationalError("dead"), None]),
-        patch("image_classifier.processor.make_connection", return_value=MagicMock()) as mock_make_conn,
+        patch(
+            "image_classifier.processor.upsert",
+            side_effect=[sqlite3.OperationalError("dead"), None],
+        ),
+        patch(
+            "image_classifier.processor.make_connection", return_value=MagicMock()
+        ) as mock_make_conn,
     ):
         mock_processor._safe_upsert(img, 7.0, 4)
 
@@ -103,4 +107,6 @@ def test_handle_failure_records_error(mock_processor, tmp_path):
     with patch("image_classifier.processor.upsert_failure") as mock_upsert_failure:
         mock_processor.handle_failure(img, "RuntimeError: CUDA error")
 
-    mock_upsert_failure.assert_called_once_with(img, "RuntimeError: CUDA error", mock_processor.conn)
+    mock_upsert_failure.assert_called_once_with(
+        img, "RuntimeError: CUDA error", mock_processor.conn
+    )

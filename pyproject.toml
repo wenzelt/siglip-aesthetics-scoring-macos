@@ -6,6 +6,7 @@ dependencies = [
     "aesthetic-predictor-v2-5",
     "torch>=2.0",
     "transformers>=4.30,<5",
+    "numpy",
     "Pillow",
     "pillow-heif>=0.18",
     "rich",

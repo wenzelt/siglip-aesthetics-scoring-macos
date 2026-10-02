@@ -69,7 +69,7 @@ jobs:
             --cov-report=term-missing \
             --cov-report=xml:coverage-${{ matrix.python-version }}.xml \
             --cov-fail-under=80 \
-            tests/test_metadata.py tests/test_database.py tests/test_classifier.py
+            tests/
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4

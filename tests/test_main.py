@@ -72,7 +72,9 @@ def test_main_skips_already_processed_images(tmp_path):
         ),
         patch("image_classifier.main.make_connection", return_value=mock_conn),
         patch("image_classifier.main.is_processed", return_value=True),
-        patch("image_classifier.processor.ImageProcessor.process_image") as mock_process,
+        patch(
+            "image_classifier.processor.ImageProcessor.process_image"
+        ) as mock_process,
         patch("image_classifier.main.all_scores", return_value=[]),
     ):
         from image_classifier.main import main
@@ -99,7 +101,8 @@ def test_main_force_flag_rescores_all_images(tmp_path):
         patch("image_classifier.main.make_connection", return_value=mock_conn),
         patch("image_classifier.main.is_processed", return_value=True),
         patch(
-            "image_classifier.processor.ImageProcessor.process_image", return_value=(7.0, _TIMINGS)
+            "image_classifier.processor.ImageProcessor.process_image",
+            return_value=(7.0, _TIMINGS),
         ) as mock_process,
         patch("image_classifier.main.all_scores", return_value=[]),
     ):
@@ -130,7 +133,9 @@ def test_main_counts_errors_without_crashing(tmp_path):
             "image_classifier.processor.ImageProcessor.process_image",
             side_effect=RuntimeError("bad image"),
         ),
-        patch("image_classifier.processor.ImageProcessor.handle_failure") as mock_handle_failure,
+        patch(
+            "image_classifier.processor.ImageProcessor.handle_failure"
+        ) as mock_handle_failure,
         patch("image_classifier.main.all_scores", return_value=[]),
     ):
         from image_classifier.main import main
@@ -170,7 +175,10 @@ def test_main_profile_flag_collects_timings(tmp_path):
         ),
         patch("image_classifier.main.make_connection", return_value=mock_conn),
         patch("image_classifier.main.is_processed", return_value=False),
-        patch("image_classifier.processor.ImageProcessor.process_image", return_value=(7.0, _TIMINGS)),
+        patch(
+            "image_classifier.processor.ImageProcessor.process_image",
+            return_value=(7.0, _TIMINGS),
+        ),
         patch("image_classifier.main.all_scores", return_value=[]),
     ):
         from image_classifier.main import main
@@ -194,7 +202,10 @@ def test_main_handles_keyboard_interrupt(tmp_path):
         ),
         patch("image_classifier.main.make_connection", return_value=mock_conn),
         patch("image_classifier.main.is_processed", return_value=False),
-        patch("image_classifier.processor.ImageProcessor.process_image", side_effect=KeyboardInterrupt),
+        patch(
+            "image_classifier.processor.ImageProcessor.process_image",
+            side_effect=KeyboardInterrupt,
+        ),
         patch("image_classifier.main.print_summary") as mock_summary,
         patch("image_classifier.main.all_scores", return_value=[]),
     ):
