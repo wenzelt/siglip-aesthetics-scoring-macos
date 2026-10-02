@@ -182,4 +182,6 @@ def test_upsert_clears_failure_record_on_success(conn, tmp_path):
     leftover = conn.execute(
         "SELECT 1 FROM failures WHERE path = ?", (str(img.resolve()),)
     ).fetchone()
-    assert leftover is None, "upsert() must delete the failures row for a successfully scored image"
+    assert leftover is None, (
+        "upsert() must delete the failures row for a successfully scored image"
+    )

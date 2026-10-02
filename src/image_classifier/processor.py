@@ -39,10 +39,9 @@ class ImageProcessor:
         score, timings = score_image(path, self.model, self.preprocessor, self.device)
         rating = score_to_rating(score)
 
-        t = time.perf_counter()
-        self._safe_upsert(path, score, rating)
-        timings.upsert_ms = (time.perf_counter() - t) * 1000
-
+        # Write metadata first and record the image in the DB last, so a failed
+        # exiftool/xattr write never leaves a "processed" row that would cause
+        # the image to be skipped on the next run.
         original_mtime_ns = path.stat().st_mtime_ns
         try:
             t = time.perf_counter()
@@ -54,6 +53,10 @@ class ImageProcessor:
             timings.xattr_ms = (time.perf_counter() - t) * 1000
         finally:
             os.utime(path, ns=(path.stat().st_atime_ns, original_mtime_ns))
+
+        t = time.perf_counter()
+        self._safe_upsert(path, score, rating)
+        timings.upsert_ms = (time.perf_counter() - t) * 1000
 
         if callback:
             callback(path, score, rating)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -56,7 +57,7 @@ def print_profile_summary(all_timings: list[Timings]) -> None:
         ("Xattr", [t.xattr_ms for t in all_timings]),
         ("Total", [t.total_ms for t in all_timings]),
     ]
-    
+
     table = Table(title=f"Timing Profile ({n} images)", box=None, padding=(0, 2))
     table.add_column("Phase", style="cyan")
     table.add_column("Mean (ms)", justify="right", style="magenta")
@@ -67,7 +68,11 @@ def print_profile_summary(all_timings: list[Timings]) -> None:
         mx = max(values)
         if name == "Total":
             table.add_section()
-            table.add_row(f"[bold]{name}[/bold]", f"[bold]{mean:.1f}[/bold]", f"[bold]{mx:.1f}[/bold]")
+            table.add_row(
+                f"[bold]{name}[/bold]",
+                f"[bold]{mean:.1f}[/bold]",
+                f"[bold]{mx:.1f}[/bold]",
+            )
         else:
             table.add_row(name, f"{mean:.1f}", f"{mx:.1f}")
 
@@ -80,22 +85,28 @@ def print_summary(
     skipped: int,
     errors: int,
     folder: Path,
-    conn: any,
+    conn: sqlite3.Connection,
 ) -> None:
     rows = all_scores(folder, conn)
-    
+
     # Summary Table
     summary_table = Table(box=None, padding=(0, 2))
     summary_table.add_row("🖼️  Scored", f"[bold]{scored:>4}[/bold] images")
-    summary_table.add_row("⏭️  Skipped", f"[dim]{skipped:>4}[/dim] (already in database)")
-    
+    summary_table.add_row(
+        "⏭️  Skipped", f"[dim]{skipped:>4}[/dim] (already in database)"
+    )
+
     if errors:
-        summary_table.add_row("❌  Errors", f"[red]{errors:>4}[/red] (logged to {LOG_PATH})")
+        summary_table.add_row(
+            "❌  Errors", f"[red]{errors:>4}[/red] (logged to {LOG_PATH})"
+        )
     else:
         summary_table.add_row("✅  Errors", f"[green]{errors:>4}[/green]")
-    
+
     console.print()
-    console.print(Panel(summary_table, expand=False, title="📊 Summary", border_style="blue"))
+    console.print(
+        Panel(summary_table, expand=False, title="📊 Summary", border_style="blue")
+    )
 
     if errors:
         failures = all_failures(folder, conn)
@@ -104,8 +115,15 @@ def print_summary(
             error_list.add_column("File")
             error_list.add_column("Error")
             for row in failures:
-                error_list.add_row(Path(row['path']).name, f"[red]{row['error']}[/red]")
-            console.print(Panel(error_list, title="Recent Failures", border_style="red", expand=False))
+                error_list.add_row(Path(row["path"]).name, f"[red]{row['error']}[/red]")
+            console.print(
+                Panel(
+                    error_list,
+                    title="Recent Failures",
+                    border_style="red",
+                    expand=False,
+                )
+            )
 
     if not rows:
         return
@@ -116,7 +134,7 @@ def print_summary(
             buckets[row["rating"]] += 1
 
     labels = {5: "8.5+", 4: "7–8.5", 3: "5.5–7", 2: "4–5.5", 1: "<4"}
-    
+
     dist_table = Table(title="Rating Distribution", box=None, padding=(0, 1))
     dist_table.add_column("Rating", justify="left")
     dist_table.add_column("Score Range", justify="right", style="dim")
@@ -134,11 +152,13 @@ def print_summary(
             star_display(stars),
             f"({labels[stars]})",
             str(count),
-            f"[{colors[stars]}]{bar}[/]"
+            f"[{colors[stars]}]{bar}[/]",
         )
 
     console.print()
-    console.print(Panel(dist_table, expand=False, title="📈 Distribution", border_style="cyan"))
+    console.print(
+        Panel(dist_table, expand=False, title="📈 Distribution", border_style="cyan")
+    )
 
 
 def main() -> None:
@@ -177,19 +197,23 @@ def main() -> None:
     header.add_column(justify="left")
     header.add_row("[bold cyan]Image Classifier[/bold cyan]")
     header.add_row("[dim]Score images aesthetically and write XMP star ratings[/dim]")
-    
+
     console.print(Panel(header, border_style="cyan", expand=False))
-    
-    console.print("[dim]Note: On first run the model (~1.5 GB) will be downloaded to ~/.cache/huggingface.[/dim]")
-    
+
+    console.print(
+        "[dim]Note: On first run the model (~1.5 GB) will be downloaded to ~/.cache/huggingface.[/dim]"
+    )
+
     console.print()
     with console.status("[bold blue]Loading aesthetic model...", spinner="dots"):
         device = get_device()
         device_color = "green" if device.type != "cpu" else "yellow"
         device_label = device.type.upper()
-        
+
         model, preprocessor = load_model(device)
-        console.print(f"✨ Model loaded on [{device_color}]{device_label}[/{device_color}]")
+        console.print(
+            f"✨ Model loaded on [{device_color}]{device_label}[/{device_color}]"
+        )
 
     console.print()
     images = scan_images(folder, args.recursive)
@@ -204,9 +228,14 @@ def main() -> None:
     scan_table = Table(box=None, padding=(0, 2))
     scan_table.add_row("📂 Folder", f"[bold]{folder}[/bold]")
     scan_table.add_row("🖼️  Total", f"{len(images)} images")
-    scan_table.add_row("🔍 Scanned", f"{skipped} already scored, [bold cyan]{len(to_process)}[/bold cyan] to process")
-    
-    console.print(Panel(scan_table, title="Scanning Info", border_style="dim", expand=False))
+    scan_table.add_row(
+        "🔍 Scanned",
+        f"{skipped} already scored, [bold cyan]{len(to_process)}[/bold cyan] to process",
+    )
+
+    console.print(
+        Panel(scan_table, title="Scanning Info", border_style="dim", expand=False)
+    )
     console.print()
 
     processor = ImageProcessor(model, preprocessor, device, conn, db_path)
@@ -225,16 +254,20 @@ def main() -> None:
             console=console,
             refresh_per_second=10,
         ) as progress:
-            task_id = progress.add_task("[cyan]Processing images...", total=len(to_process))
+            task_id = progress.add_task(
+                "[cyan]Processing images...", total=len(to_process)
+            )
             for path in to_process:
-                progress.update(task_id, description=f"[cyan]Processing: [bold]{path.name}[/bold]")
+                progress.update(
+                    task_id, description=f"[cyan]Processing: [bold]{path.name}[/bold]"
+                )
 
-                def progress_callback(p: Path, s: float, r: int) -> None:
+                def progress_callback(path: Path, score: float, rating: int) -> None:
                     # Update task description with the result of the last processed image
                     progress.update(
                         task_id,
                         advance=1,
-                        description=f"Last: {p.name}  [bold yellow]{s:.2f}[/]  {star_display(r)}",
+                        description=f"Last: {path.name}  [bold yellow]{score:.2f}[/]  {star_display(rating)}",
                     )
 
                 try:

@@ -12,6 +12,6 @@ def scan_images(folder: Path, recursive: bool) -> list[Path]:
         path
         for path in glob_fn("*")
         if path.is_file()
-        and not any(part.startswith(".") for part in path.parts)
+        and not any(part.startswith(".") for part in path.relative_to(folder).parts)
         and path.suffix.lower() in SUPPORTED_EXTENSIONS
     ]

@@ -49,3 +49,12 @@ def test_scan_images_case_insensitive_extensions(tmp_path):
     (tmp_path / "photo.PNG").touch()
     results = scan_images(tmp_path, recursive=False)
     assert len(results) == 2
+
+
+def test_scan_images_works_inside_hidden_parent_folder(tmp_path):
+    folder = tmp_path / ".photos"
+    folder.mkdir()
+    (folder / "a.jpg").touch()
+    (folder / ".hidden.jpg").touch()
+    results = scan_images(folder, recursive=True)
+    assert {p.name for p in results} == {"a.jpg"}
