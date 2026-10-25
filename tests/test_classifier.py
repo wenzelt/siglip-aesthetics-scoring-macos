@@ -1,20 +1,33 @@
 from __future__ import annotations
 
+import io
+import math
 import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import pytest
 import torch
+from PIL import Image, UnidentifiedImageError
 
 from image_classifier.classifier import (
+    RATING_BANDS,
     SUPPORTED_EXTENSIONS,
     ClassifierError,
     Timings,
     get_device,
+    load_image,
     load_model,
+    preprocess,
+    score_batch,
     score_image,
     score_to_rating,
+    validate_score,
 )
+from tests.helpers import INPUT_SIZE, FakeModel, FakePreprocessor, make_image
+
+CPU = torch.device("cpu")
 
 
 # --- score_to_rating ---
@@ -33,25 +46,65 @@ from image_classifier.classifier import (
         (8.4, 4),  # just below 8.5
         (8.5, 5),  # exactly at 8.5 boundary — goes to 5
         (10.0, 5),  # maximum
+        (-0.4, 1),  # the model can stray below its nominal range
+        (11.2, 5),  # ... and above it
     ],
 )
 def test_score_to_rating_boundaries(score, expected_rating):
     assert score_to_rating(score) == expected_rating
 
 
+def test_score_to_rating_refuses_nan():
+    """NaN compares false against every bound; it must not silently become 5 stars."""
+    with pytest.raises(ValueError):
+        score_to_rating(float("nan"))
+
+
+def test_rating_bands_cover_every_star_best_first():
+    assert [stars for _, stars, _ in RATING_BANDS] == [5, 4, 3, 2, 1]
+    bounds = [lower for lower, _, _ in RATING_BANDS]
+    assert bounds == sorted(bounds, reverse=True)
+    assert bounds[-1] == -math.inf
+
+
+# --- validate_score ---
+
+
+def test_validate_score_passes_finite_values_through():
+    assert validate_score(6.5) == 6.5
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_validate_score_rejects_non_finite(bad):
+    with pytest.raises(ClassifierError, match="non-finite"):
+        validate_score(bad)
+
+
 # --- get_device ---
 
 
+def test_get_device_prefers_cuda():
+    with (
+        patch("torch.cuda.is_available", return_value=True),
+        patch("torch.backends.mps.is_available", return_value=True),
+    ):
+        assert get_device() == torch.device("cuda")
+
+
 def test_get_device_returns_mps_when_available():
-    with patch("torch.backends.mps.is_available", return_value=True):
-        device = get_device()
-    assert device == torch.device("mps")
+    with (
+        patch("torch.cuda.is_available", return_value=False),
+        patch("torch.backends.mps.is_available", return_value=True),
+    ):
+        assert get_device() == torch.device("mps")
 
 
 def test_get_device_falls_back_to_cpu():
-    with patch("torch.backends.mps.is_available", return_value=False):
-        device = get_device()
-    assert device == torch.device("cpu")
+    with (
+        patch("torch.cuda.is_available", return_value=False),
+        patch("torch.backends.mps.is_available", return_value=False),
+    ):
+        assert get_device() == torch.device("cpu")
 
 
 # --- SUPPORTED_EXTENSIONS ---
@@ -61,107 +114,224 @@ def test_supported_extensions_are_lowercase():
     for ext in SUPPORTED_EXTENSIONS:
         assert ext == ext.lower()
         assert ext.startswith(".")
-    assert len(SUPPORTED_EXTENSIONS) == 8
+    assert len(SUPPORTED_EXTENSIONS) == 7
+
+
+def test_bmp_is_not_supported_because_exiftool_cannot_write_it():
+    assert ".bmp" not in SUPPORTED_EXTENSIONS
+
+
+# --- load_image ---
+
+
+def test_load_image_returns_rgb_uint8_array(tmp_path):
+    path = make_image(tmp_path / "a.jpg", size=(40, 30))
+    arr = load_image(path)
+    assert arr.shape == (30, 40, 3)
+    assert arr.dtype == np.uint8
+
+
+def test_load_image_applies_exif_orientation(tmp_path):
+    """A 40x30 JPEG flagged Orientation=6 is a portrait photo and must load as 30x40."""
+    exif = Image.Exif()
+    exif[0x0112] = 6  # rotate 90 CW to display
+    path = make_image(tmp_path / "phone.jpg", size=(40, 30), exif=exif)
+    assert load_image(path).shape == (40, 30, 3)
+
+
+def test_load_image_survives_malformed_exif(tmp_path):
+    path = make_image(tmp_path / "a.jpg", size=(40, 30))
+    with patch(
+        "image_classifier.classifier.ImageOps.exif_transpose",
+        side_effect=ValueError("bad exif"),
+    ):
+        assert load_image(path).shape == (30, 40, 3)
+
+
+def test_load_image_fits_to_the_preprocessor_input_size(tmp_path):
+    path = make_image(tmp_path / "big.jpg", size=(100, 60))
+    arr = load_image(path, FakePreprocessor())
+    assert arr.shape == (INPUT_SIZE, INPUT_SIZE, 3)
+
+
+def test_load_image_ignores_a_preprocessor_without_a_size(tmp_path):
+    path = make_image(tmp_path / "a.jpg", size=(40, 30))
+    assert load_image(path, MagicMock()).shape == (30, 40, 3)
+
+
+def test_load_image_falls_back_to_bicubic_for_an_unknown_resample_setting(tmp_path):
+    path = make_image(tmp_path / "big.jpg", size=(100, 60))
+    odd = SimpleNamespace(size={"height": 8, "width": 8}, resample="not-a-filter")
+    assert load_image(path, odd).shape == (8, 8, 3)
+
+
+def test_prefit_resize_gives_the_same_tensor_as_the_preprocessors_own_resize(tmp_path):
+    """Pre-resizing in PIL must not change what the model sees (bit-identical)."""
+    from transformers import SiglipImageProcessor
+
+    processor = SiglipImageProcessor(size={"height": 64, "width": 64})
+    rng = np.random.default_rng(0)
+    Image.fromarray((rng.random((90, 130, 3)) * 255).astype("uint8")).save(
+        tmp_path / "noise.png"
+    )
+
+    prefit = preprocess(load_image(tmp_path / "noise.png", processor), processor)
+    with Image.open(tmp_path / "noise.png") as img:
+        reference = preprocess(np.asarray(img.convert("RGB")), processor)
+
+    assert prefit.shape == (3, 64, 64)
+    assert torch.equal(prefit, reference)
+
+
+@pytest.mark.parametrize("mode", ["L", "LA", "P", "RGBA", "CMYK"])
+def test_load_image_always_yields_three_channels(tmp_path, mode):
+    """Whatever mode the file is in, the preprocessor must receive (H, W, 3)."""
+    path = tmp_path / f"{mode}.tiff"
+    Image.new(mode, (20, 10)).save(path)
+    assert load_image(path).shape == (10, 20, 3)
+
+
+@pytest.mark.filterwarnings("ignore:Palette images with Transparency")
+def test_load_image_handles_palette_png_with_transparency(tmp_path):
+    base = Image.new("RGBA", (64, 64), color=(100, 150, 200, 128))
+    path = tmp_path / "palette_transparency.png"
+    base.convert("P").save(path, format="PNG")
+    assert load_image(path).shape == (64, 64, 3)
+
+
+def test_load_image_tolerates_truncated_jpeg(tmp_path):
+    """A JPEG with its last bytes cut off still yields pixels (LOAD_TRUNCATED_IMAGES)."""
+    buf = io.BytesIO()
+    Image.new("RGB", (64, 64), color=(200, 100, 50)).save(buf, format="JPEG")
+    full = buf.getvalue()
+    assert len(full) > 64
+    path = tmp_path / "truncated.jpg"
+    path.write_bytes(full[:-32])
+    assert load_image(path).shape == (64, 64, 3)
+
+
+def test_load_image_raises_classifier_error_for_unreadable_file(tmp_path):
+    bad = tmp_path / "corrupt.jpg"
+    bad.write_bytes(b"not an image")
+    with pytest.raises(ClassifierError):
+        load_image(bad)
+
+
+def test_load_image_raises_classifier_error_for_missing_file(tmp_path):
+    with pytest.raises(ClassifierError):
+        load_image(tmp_path / "ghost.jpg")
+
+
+def test_load_image_turns_decompression_bombs_into_classifier_errors(tmp_path):
+    path = make_image(tmp_path / "a.jpg")
+    with patch(
+        "image_classifier.classifier.Image.open",
+        side_effect=Image.DecompressionBombError("too many pixels"),
+    ):
+        with pytest.raises(ClassifierError, match="too many pixels"):
+            load_image(path)
+
+
+# --- preprocess / score_batch ---
+
+
+def test_preprocess_returns_unbatched_tensor(fake_preprocessor):
+    arr = np.zeros((INPUT_SIZE, INPUT_SIZE, 3), dtype=np.uint8)
+    assert preprocess(arr, fake_preprocessor).shape == (3, INPUT_SIZE, INPUT_SIZE)
+
+
+def test_score_batch_returns_one_score_per_image_in_one_forward_pass():
+    model = FakeModel()
+    dark = torch.zeros(3, 4, 4)
+    bright = torch.ones(3, 4, 4)
+    scores = score_batch([dark, bright, dark], model, CPU)
+    assert model.batch_sizes == [3]
+    assert scores == pytest.approx([1.0, 10.0, 1.0], abs=0.1)
+    assert all(isinstance(s, float) for s in scores)
+
+
+def test_score_batch_rejects_a_model_returning_the_wrong_number_of_scores():
+    model = MagicMock(
+        return_value=SimpleNamespace(logits=torch.zeros(2, 1)),
+    )
+    with pytest.raises(ClassifierError, match="2 scores for 3 images"):
+        score_batch([torch.zeros(3, 4, 4)] * 3, model, CPU)
+
+
+def test_score_batch_runs_the_model_in_bfloat16():
+    model = FakeModel()
+    seen = []
+    original = model.__call__
+
+    def spy(pixel_values):
+        seen.append(pixel_values.dtype)
+        return original(pixel_values)
+
+    score_batch([torch.zeros(3, 4, 4)], spy, CPU)
+    assert seen == [torch.bfloat16]
 
 
 # --- score_image ---
 
 
-def _make_mock_model(score_value: float):
-    """Return a mock model that produces a fixed score."""
-    import numpy as np
-
-    mock_output = MagicMock()
-    mock_output.logits.squeeze.return_value.float.return_value.cpu.return_value.numpy.return_value = np.float32(
-        score_value
-    )
-
-    mock_model = MagicMock()
-    mock_model.return_value = mock_output
-    return mock_model
-
-
-def _make_mock_preprocessor():
-    """Return a mock preprocessor that passes pixel values through."""
-    mock_pixel = MagicMock()
-    mock_pixel.to.return_value = mock_pixel
-
-    mock_output = MagicMock()
-    mock_output.pixel_values.to.return_value = mock_pixel
-
-    mock_preprocessor = MagicMock()
-    mock_preprocessor.return_value = mock_output
-    return mock_preprocessor
-
-
-def test_score_image_returns_tuple_of_score_and_timings(tmp_path):
-    from PIL import Image as PILImage
-
-    img_path = tmp_path / "test.jpg"
-    PILImage.new("RGB", (64, 64), color=(128, 128, 128)).save(img_path)
-
-    model = _make_mock_model(7.25)
-    preprocessor = _make_mock_preprocessor()
-    device = torch.device("cpu")
-
-    score, timings = score_image(img_path, model, preprocessor, device)
+def test_score_image_returns_tuple_of_score_and_timings(
+    tmp_path, fake_model, fake_preprocessor
+):
+    path = make_image(tmp_path / "test.jpg", level=255)
+    score, timings = score_image(path, fake_model, fake_preprocessor, CPU)
     assert isinstance(score, float)
-    assert abs(score - 7.25) < 0.01
+    assert score == pytest.approx(10.0, abs=0.1)
     assert isinstance(timings, Timings)
 
 
-def test_score_image_timings_are_non_negative(tmp_path):
-    from PIL import Image as PILImage
-
-    img_path = tmp_path / "test.jpg"
-    PILImage.new("RGB", (64, 64), color=(128, 128, 128)).save(img_path)
-
-    _, timings = score_image(
-        img_path, _make_mock_model(5.0), _make_mock_preprocessor(), torch.device("cpu")
-    )
+def test_score_image_timings_are_non_negative_and_total_matches_sum(
+    tmp_path, fake_model, fake_preprocessor
+):
+    path = make_image(tmp_path / "test.jpg")
+    _, timings = score_image(path, fake_model, fake_preprocessor, CPU)
     assert timings.load_ms >= 0
     assert timings.preprocess_ms >= 0
     assert timings.infer_ms >= 0
-
-
-def test_score_image_timings_total_matches_sum(tmp_path):
-    from PIL import Image as PILImage
-
-    img_path = tmp_path / "test.jpg"
-    PILImage.new("RGB", (64, 64), color=(128, 128, 128)).save(img_path)
-
-    _, timings = score_image(
-        img_path, _make_mock_model(5.0), _make_mock_preprocessor(), torch.device("cpu")
-    )
-    assert (
-        abs(
-            timings.total_ms
-            - (timings.load_ms + timings.preprocess_ms + timings.infer_ms)
-        )
-        < 0.1
+    assert timings.total_ms == pytest.approx(
+        timings.load_ms + timings.preprocess_ms + timings.infer_ms
     )
 
 
-def test_score_image_raises_classifier_error_for_unreadable_file(tmp_path):
-    bad_path = tmp_path / "corrupt.jpg"
-    bad_path.write_bytes(b"not an image")
-
-    model = _make_mock_model(5.0)
-    preprocessor = _make_mock_preprocessor()
-    device = torch.device("cpu")
-
+def test_score_image_raises_classifier_error_for_unreadable_file(
+    tmp_path, fake_model, fake_preprocessor
+):
+    bad = tmp_path / "corrupt.jpg"
+    bad.write_bytes(b"not an image")
     with pytest.raises(ClassifierError):
-        score_image(bad_path, model, preprocessor, device)
+        score_image(bad, fake_model, fake_preprocessor, CPU)
 
 
-def test_score_image_raises_classifier_error_for_missing_file(tmp_path):
-    missing = tmp_path / "ghost.jpg"
-    model = _make_mock_model(5.0)
-    preprocessor = _make_mock_preprocessor()
-    device = torch.device("cpu")
-
+def test_score_image_raises_classifier_error_for_missing_file(
+    tmp_path, fake_model, fake_preprocessor
+):
     with pytest.raises(ClassifierError):
-        score_image(missing, model, preprocessor, device)
+        score_image(tmp_path / "ghost.jpg", fake_model, fake_preprocessor, CPU)
+
+
+def test_score_image_rejects_non_finite_model_output(tmp_path, fake_preprocessor):
+    nan_model = MagicMock(
+        return_value=SimpleNamespace(logits=torch.full((1, 1), float("nan")))
+    )
+    path = make_image(tmp_path / "a.jpg")
+    with pytest.raises(ClassifierError, match="non-finite"):
+        score_image(path, nan_model, fake_preprocessor, CPU)
+
+
+def test_timings_total_includes_all_phases():
+    t = Timings(
+        load_ms=10,
+        preprocess_ms=20,
+        infer_ms=500,
+        upsert_ms=2,
+        exiftool_ms=50,
+        xattr_ms=5,
+    )
+    assert abs(t.total_ms - 587.0) < 0.01
 
 
 # --- load_model shim idempotency ---
@@ -218,158 +388,103 @@ def test_load_model_shim_not_doubled(monkeypatch):
     )
 
 
+def test_load_model_shim_unwraps_a_full_siglip_config(monkeypatch):
+    """The patched __init__ must hand the model's vision_config, not the full SiglipConfig."""
+    received = []
+
+    class FakeAestheticModel:
+        def __init__(self, config, *args, **kwargs):
+            received.append(config)
+
+    class FakeSiglipConfig:
+        def __init__(self):
+            self.vision_config = object()
+
+    fake_ap = MagicMock()
+    fake_ap.convert_v2_5_from_siglip.return_value = (MagicMock(), MagicMock())
+    fake_siglip_mod = MagicMock(AestheticPredictorV2_5Model=FakeAestheticModel)
+    fake_config_mod = MagicMock(SiglipConfig=FakeSiglipConfig)
+    monkeypatch.setitem(sys.modules, "aesthetic_predictor_v2_5", fake_ap)
+    monkeypatch.setitem(
+        sys.modules, "aesthetic_predictor_v2_5.siglip_v2_5", fake_siglip_mod
+    )
+    monkeypatch.setitem(
+        sys.modules, "transformers.models.siglip.configuration_siglip", fake_config_mod
+    )
+    device = MagicMock(type="cpu")
+    load_model(device)
+
+    full = FakeSiglipConfig()
+    FakeAestheticModel(full)
+    already_vision = object()
+    FakeAestheticModel(already_vision)
+
+    assert received == [full.vision_config, already_vision]
+
+
+def test_load_model_returns_the_model_in_bfloat16_on_the_device(monkeypatch):
+    model = MagicMock()
+    model.to.return_value = model
+    fake_ap = MagicMock()
+    fake_ap.convert_v2_5_from_siglip.return_value = (model, "preprocessor")
+    fake_siglip_mod = MagicMock(AestheticPredictorV2_5Model=type("M", (), {}))
+    monkeypatch.setitem(sys.modules, "aesthetic_predictor_v2_5", fake_ap)
+    monkeypatch.setitem(
+        sys.modules, "aesthetic_predictor_v2_5.siglip_v2_5", fake_siglip_mod
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "transformers.models.siglip.configuration_siglip",
+        MagicMock(SiglipConfig=type("C", (), {})),
+    )
+    device = MagicMock(type="cpu")
+
+    result_model, result_preprocessor = load_model(device)
+
+    assert result_model is model and result_preprocessor == "preprocessor"
+    assert [c.args[0] for c in model.to.call_args_list] == [torch.bfloat16, device]
+
+
 # --- HEIC support ---
 
 
 def _write_heic_fixture(path) -> None:
     """Write a minimal real HEIC file to *path* using pillow_heif."""
     import pillow_heif
-    from PIL import Image as PILImage
 
-    pil_img = PILImage.new("RGB", (16, 16), color=(255, 0, 128))
+    pil_img = Image.new("RGB", (16, 16), color=(255, 0, 128))
     pillow_heif.from_pillow(pil_img).save(path)
 
 
 @pytest.mark.heic
-def test_score_image_heic_raises_without_registration(tmp_path):
-    """score_image must raise ClassifierError when PIL cannot identify the HEIC file.
+def test_load_image_heic_raises_without_registration(tmp_path):
+    """load_image must raise ClassifierError when PIL cannot identify the HEIC file.
 
-    This is the RED anchor: it reproduces the exact error from the bug report —
-    PIL.Image.open raises UnidentifiedImageError on a .heic path when
-    pillow_heif has not been registered. We simulate that condition by
-    patching Image.open inside the classifier module to raise the same error
-    that Pillow raises in production without the HEIF opener.
+    Reproduces the original bug report: Image.open raises UnidentifiedImageError
+    on a .heic path when pillow_heif has not been registered.
     """
-    from PIL import UnidentifiedImageError as _UIE
-
     heic_path = tmp_path / "fixture.heic"
     _write_heic_fixture(heic_path)
 
-    model = _make_mock_model(5.0)
-    preprocessor = _make_mock_preprocessor()
-    device = torch.device("cpu")
-
-    # Simulate the production failure: Image.open raises UnidentifiedImageError
-    # as it does when pillow_heif is not imported/registered.
     def _fake_open(path, *args, **kwargs):
-        raise _UIE(f"cannot identify image file '{path}'")
+        raise UnidentifiedImageError(f"cannot identify image file '{path}'")
 
     with patch("image_classifier.classifier.Image.open", side_effect=_fake_open):
         with pytest.raises(ClassifierError, match="cannot identify image file"):
-            score_image(heic_path, model, preprocessor, device)
+            load_image(heic_path)
 
 
 @pytest.mark.heic
-def test_score_image_heic_succeeds_with_registration(tmp_path):
-    """score_image must open and score a HEIC file when register_heif_opener() is active.
-
-    This is the GREEN proof: importing image_classifier.classifier already calls
-    register_heif_opener() at module level, so PIL.Image.open() handles HEIC.
-    The test creates a real HEIC fixture (no mocking of the image load) and
-    confirms score_image returns a valid (float, Timings) pair.
-    """
+def test_score_image_heic_succeeds_with_registration(
+    tmp_path, fake_model, fake_preprocessor
+):
+    """Importing image_classifier.classifier registers the HEIF opener, so a real
+    HEIC file (no mocking of the image load) scores like any other image."""
     heic_path = tmp_path / "fixture.heic"
     _write_heic_fixture(heic_path)
 
-    model = _make_mock_model(6.5)
-    preprocessor = _make_mock_preprocessor()
-    device = torch.device("cpu")
+    score, timings = score_image(heic_path, fake_model, fake_preprocessor, CPU)
 
-    score, timings = score_image(heic_path, model, preprocessor, device)
-
-    assert isinstance(score, float), "score_image must return a float score"
-    assert abs(score - 6.5) < 0.01, f"expected ~6.5, got {score}"
-    assert isinstance(timings, Timings), "score_image must return a Timings instance"
-    assert timings.load_ms >= 0, "load_ms must be non-negative"
-
-
-# --- Bug 1: truncated JPEG tolerance ---
-
-
-def test_score_image_succeeds_for_truncated_jpeg(tmp_path):
-    """score_image must NOT raise ClassifierError for a truncated-but-parseable JPEG.
-
-    A real JPEG header followed by valid scan data that is simply cut short is
-    exactly the kind of file Pillow rejects by default (LOAD_TRUNCATED_IMAGES=False)
-    but should tolerate when the flag is True.
-
-    We create a minimal valid JPEG via PIL, then chop the last 512 bytes off,
-    which makes Pillow raise ImageFile.IsTruncatedError (a subclass of OSError)
-    unless LOAD_TRUNCATED_IMAGES is enabled.
-    """
-    import io
-
-    from PIL import Image as PILImage
-
-    # Build a real JPEG in memory, then truncate it.
-    buf = io.BytesIO()
-    PILImage.new("RGB", (64, 64), color=(200, 100, 50)).save(buf, format="JPEG")
-    full_bytes = buf.getvalue()
-    # Drop the last 32 bytes so Pillow sees an incomplete scan segment.
-    # Dropping 32 bytes is enough to trigger OSError without the flag, but
-    # recoverable enough for Pillow to produce pixel data when the flag is set.
-    assert len(full_bytes) > 64, "sanity: JPEG must be larger than our truncation"
-    truncated_bytes = full_bytes[:-32]
-
-    img_path = tmp_path / "truncated.jpg"
-    img_path.write_bytes(truncated_bytes)
-
-    model = _make_mock_model(5.0)
-    preprocessor = _make_mock_preprocessor()
-    device = torch.device("cpu")
-
-    # Must not raise — truncated images should be loaded tolerantly.
-    score, timings = score_image(img_path, model, preprocessor, device)
     assert isinstance(score, float)
-    assert isinstance(timings, Timings)
-
-
-# --- Bug 2: grayscale JPEG produces 3-channel array ---
-
-
-def test_score_image_palette_with_transparency_produces_3channel_array(tmp_path):
-    """score_image must pass a (H, W, 3) uint8 array to the preprocessor for a
-    palette image with transparency (mode 'P' + 'transparency').
-
-    The WhatsApp JPEG IMG-20170123-WA0003.jpg is a grayscale/palette image.
-    Pillow's img.convert("RGB") on a 'P' image that carries an alpha channel
-    internally goes through 'RGBA' first, yielding a (H, W, 4) array.  The
-    existing guard in classifier.py slices arr[:, :, :3] for 4-channel arrays,
-    BUT the guard for arr.shape[2] < 3 uses np.repeat on axis 0 of the slice —
-    a palette image with no transparency that Pillow converts to 1-channel first
-    can still produce ndim==3 with shape[2]==1 that the guard handles, BUT a
-    palette image converted internally through RGBA produces shape[2]==4, which
-    the existing `arr[:, :, :3]` guard *does* handle.
-
-    The critical sub-case that was broken: a palette image saved as PNG (which
-    preserves the palette + transparency info) opened and converted.  We test
-    that path directly with a synthetic 'P'-mode PNG to confirm exactly 3
-    channels reach the preprocessor regardless of intermediate Pillow mode.
-    """
-    import numpy as np
-    from PIL import Image as PILImage
-
-    # Build a palette image with a transparency entry — this is what forces
-    # Pillow to route through RGBA when convert("RGB") is called.
-    base = PILImage.new("RGBA", (64, 64), color=(100, 150, 200, 128))
-    palette_img = base.convert("P")  # This sets mode='P' with palette + alpha info
-
-    img_path = tmp_path / "palette_transparency.png"
-    palette_img.save(img_path, format="PNG")
-
-    captured_arrays: list[np.ndarray] = []
-
-    def _capturing_preprocessor(images, **kwargs):  # type: ignore[override]
-        arr = images if isinstance(images, np.ndarray) else np.array(images)
-        captured_arrays.append(arr)
-        return _make_mock_preprocessor()(images=images, **kwargs)
-
-    model = _make_mock_model(5.0)
-    device = torch.device("cpu")
-
-    score_image(img_path, model, _capturing_preprocessor, device)
-
-    assert len(captured_arrays) == 1, "preprocessor must be called exactly once"
-    arr = captured_arrays[0]
-    assert arr.ndim == 3, f"expected 3-D array (H, W, C), got shape {arr.shape}"
-    assert arr.shape[2] == 3, f"expected 3 channels, got {arr.shape[2]}"
+    assert 1.0 <= score <= 10.0
+    assert timings.load_ms >= 0

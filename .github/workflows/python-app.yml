@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+# A newer push to the same branch/PR makes the older run pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # ── 1. Lint & type-check (fast, no GPU needed) ──────────────────────────────
   lint:
@@ -36,16 +41,22 @@ jobs:
         run: uv run ruff check src/ tests/
 
       - name: mypy type check
-        run: uv run mypy src/ --ignore-missing-imports
+        run: uv run mypy src/
 
   # ── 2. Test matrix across supported Python versions ─────────────────────────
   test:
-    name: Test (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        os: [ubuntu-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+        include:
+          # macOS is the primary target: it is the only place the Finder-tag
+          # (xattr) path can be exercised for real.
+          - os: macos-latest
+            python-version: "3.12"
 
     steps:
       - uses: actions/checkout@v4
@@ -59,6 +70,15 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      # The integration tests drive the real exiftool; without it they skip.
+      - name: Install exiftool (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libimage-exiftool-perl
+
+      - name: Install exiftool (macOS)
+        if: runner.os == 'macOS'
+        run: brew install exiftool
+
       - name: Install dependencies
         run: uv sync --group dev
 
@@ -67,16 +87,16 @@ jobs:
           uv run pytest \
             --cov=image_classifier \
             --cov-report=term-missing \
-            --cov-report=xml:coverage-${{ matrix.python-version }}.xml \
-            --cov-fail-under=80 \
+            --cov-report=xml:coverage-${{ matrix.os }}-${{ matrix.python-version }}.xml \
+            --cov-fail-under=90 \
             tests/
 
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: coverage-${{ matrix.python-version }}
-          path: coverage-${{ matrix.python-version }}.xml
+          name: coverage-${{ matrix.os }}-${{ matrix.python-version }}
+          path: coverage-${{ matrix.os }}-${{ matrix.python-version }}.xml
 
   # ── 3. Security scan ─────────────────────────────────────────────────────────
   security:

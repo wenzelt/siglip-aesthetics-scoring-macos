@@ -1,7 +1,20 @@
 [project]
 name = "image-classifier"
 version = "0.1.0"
+description = "Score photos for aesthetic quality and write XMP star ratings and macOS Finder tags."
+readme = "README.md"
 requires-python = ">=3.11"
+keywords = ["photos", "aesthetics", "siglip", "xmp", "exiftool", "macos"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics",
+]
 dependencies = [
     "aesthetic-predictor-v2-5",
     "torch>=2.0",
@@ -12,6 +25,10 @@ dependencies = [
     "rich",
 ]
 
+[project.urls]
+Homepage = "https://github.com/wenzelt/siglip-aesthetics-scoring-macos"
+Issues = "https://github.com/wenzelt/siglip-aesthetics-scoring-macos/issues"
+
 [project.scripts]
 classify = "image_classifier.main:main"
 
@@ -20,6 +37,7 @@ dev = [
     "mypy>=1.19.1",
     "pytest>=8.0",
     "pytest-cov>=5.0",
+    "pyyaml>=6.0",
     "ruff>=0.15.7",
 ]
 
@@ -39,5 +57,14 @@ markers = [
 
 [tool.coverage.run]
 source = ["src/image_classifier"]
-# main.py is the CLI entry point requiring GPU + real files; not testable in CI
-omit = ["src/image_classifier/main.py"]
+
+[tool.ruff.lint]
+# Defaults (E4, E7, E9, F) plus import order, pyupgrade and bugbear.
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+check_untyped_defs = true

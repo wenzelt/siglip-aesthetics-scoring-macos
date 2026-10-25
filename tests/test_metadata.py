@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import plistlib
+import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -9,8 +10,9 @@ import pytest
 from image_classifier.metadata import (
     MetadataError,
     _is_score_tag,
-    _read_finder_tags,
     check_exiftool,
+    finder_tags_supported,
+    read_finder_tags,
     write_rating,
     write_score_tag,
 )
@@ -219,7 +221,7 @@ def test_write_score_tag_accepts_score_without_rating(tmp_path):
     assert tags == ["7.2"]
 
 
-# --- _read_finder_tags: bare except narrowed ---
+# --- read_finder_tags: bare except narrowed ---
 
 
 def test_read_finder_tags_propagates_unexpected_errors(tmp_path):
@@ -232,7 +234,7 @@ def test_read_finder_tags_propagates_unexpected_errors(tmp_path):
             "image_classifier.metadata.plistlib.loads", side_effect=MemoryError("oom")
         ):
             with pytest.raises(MemoryError):
-                _read_finder_tags(img)
+                read_finder_tags(img)
 
 
 # --- mtime preservation ---
@@ -278,3 +280,153 @@ def test_write_score_tag_does_not_change_mtime_when_caller_restores(tmp_path):
             os.utime(img, ns=(img.stat().st_atime_ns, original_mtime_ns))
 
     assert img.stat().st_mtime_ns == original_mtime_ns
+
+
+# --- platform guard ---
+
+
+def test_finder_tags_supported_on_macos_with_xattr():
+    with (
+        patch("image_classifier.metadata.sys.platform", "darwin"),
+        patch("image_classifier.metadata.shutil.which", return_value="/usr/bin/xattr"),
+    ):
+        assert finder_tags_supported() is True
+
+
+def test_finder_tags_unsupported_on_linux_even_if_an_xattr_binary_exists():
+    with (
+        patch("image_classifier.metadata.sys.platform", "linux"),
+        patch("image_classifier.metadata.shutil.which", return_value="/usr/bin/xattr"),
+    ):
+        assert finder_tags_supported() is False
+
+
+def test_finder_tags_unsupported_on_macos_without_xattr():
+    with (
+        patch("image_classifier.metadata.sys.platform", "darwin"),
+        patch("image_classifier.metadata.shutil.which", return_value=None),
+    ):
+        assert finder_tags_supported() is False
+
+
+# --- subprocess failure modes ---
+
+
+def test_write_rating_turns_a_hang_into_metadata_error(tmp_path):
+    img = tmp_path / "photo.jpg"
+    img.touch()
+    with patch(
+        "image_classifier.metadata.subprocess.run",
+        side_effect=subprocess.TimeoutExpired("exiftool", 30),
+    ):
+        with pytest.raises(MetadataError, match="timed out"):
+            write_rating(img, rating=3)
+
+
+def test_write_rating_turns_a_missing_binary_into_metadata_error(tmp_path):
+    img = tmp_path / "photo.jpg"
+    img.touch()
+    with patch(
+        "image_classifier.metadata.subprocess.run",
+        side_effect=FileNotFoundError("exiftool"),
+    ):
+        with pytest.raises(MetadataError, match="could not be run"):
+            write_rating(img, rating=3)
+
+
+def test_read_finder_tags_hang_does_not_look_like_no_tags(tmp_path):
+    """A timed-out read must fail loudly, not return [] and let the user's tags be overwritten."""
+    img = tmp_path / "photo.jpg"
+    img.touch()
+    with patch(
+        "image_classifier.metadata.subprocess.run",
+        side_effect=subprocess.TimeoutExpired("xattr", 30),
+    ):
+        with pytest.raises(MetadataError, match="timed out"):
+            read_finder_tags(img)
+
+
+# --- read_finder_tags: unexpected plist contents ---
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [{"not": "a list"}, "just a string", 42],
+)
+def test_read_finder_tags_ignores_non_list_plists(tmp_path, payload):
+    img = tmp_path / "photo.jpg"
+    img.touch()
+    hex_out = plistlib.dumps(payload, fmt=plistlib.FMT_BINARY).hex()
+    with patch(
+        "image_classifier.metadata.subprocess.run",
+        return_value=MagicMock(returncode=0, stdout=hex_out),
+    ):
+        assert read_finder_tags(img) == []
+
+
+def test_read_finder_tags_drops_non_string_entries(tmp_path):
+    img = tmp_path / "photo.jpg"
+    img.touch()
+    hex_out = plistlib.dumps(["Red\n6", 7, "trip"], fmt=plistlib.FMT_BINARY).hex()
+    with patch(
+        "image_classifier.metadata.subprocess.run",
+        return_value=MagicMock(returncode=0, stdout=hex_out),
+    ):
+        assert read_finder_tags(img) == ["Red\n6", "trip"]
+
+
+def test_read_finder_tags_ignores_garbage_hex(tmp_path):
+    img = tmp_path / "photo.jpg"
+    img.touch()
+    with patch(
+        "image_classifier.metadata.subprocess.run",
+        return_value=MagicMock(returncode=0, stdout="zz not hex"),
+    ):
+        assert read_finder_tags(img) == []
+
+
+def test_read_finder_tags_handles_xattr_multiline_hex_output(tmp_path):
+    img = tmp_path / "photo.jpg"
+    img.touch()
+    raw = plistlib.dumps(["vacation"], fmt=plistlib.FMT_BINARY).hex()
+    wrapped = "\n".join(raw[i : i + 32] for i in range(0, len(raw), 32))
+    with patch(
+        "image_classifier.metadata.subprocess.run",
+        return_value=MagicMock(returncode=0, stdout=wrapped),
+    ):
+        assert read_finder_tags(img) == ["vacation"]
+
+
+# --- write_score_tag: pre-read tags ---
+
+
+def test_write_score_tag_uses_supplied_tags_without_reading_again(tmp_path):
+    """Tags read before the exiftool rewrite are used as-is; no second xattr read."""
+    img = tmp_path / "photo.jpg"
+    img.touch()
+    with patch(
+        "image_classifier.metadata.subprocess.run",
+        return_value=MagicMock(returncode=0),
+    ) as mock_run:
+        write_score_tag(img, score=7.8, existing_tags=["family", "5.5", "Red\n6"])
+
+    assert mock_run.call_count == 1  # only the write
+    assert mock_run.call_args[0][0][1] == "-wx"
+    assert _decode_xattr_call(mock_run) == ["family", "Red\n6", "7.8"]
+
+
+# --- _is_score_tag: ranges and legacy stars ---
+
+
+def test_is_score_tag_accepts_scores_slightly_outside_the_nominal_range():
+    assert _is_score_tag("-0.3") is True
+    assert _is_score_tag("10.4") is True
+
+
+def test_is_score_tag_recognises_legacy_star_tags():
+    assert _is_score_tag("★★★☆☆") is True
+
+
+def test_is_score_tag_leaves_user_tags_alone():
+    for tag in ("vacation", "2023", "v1.2.3", "Red\n6", "7.55", "a7.3"):
+        assert _is_score_tag(tag) is False, tag
