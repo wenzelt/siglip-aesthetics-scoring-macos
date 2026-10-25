@@ -4,14 +4,17 @@ import plistlib
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 _SUBPROCESS_TIMEOUT = 30
-_SCORE_TAG_RE = re.compile(r"^\d{1,2}\.\d$")
+_FINDER_TAGS_ATTR = "com.apple.metadata:_kMDItemUserTags"
+# One decimal place, optionally negative: the model can stray a little outside 1-10.
+_SCORE_TAG_RE = re.compile(r"^-?\d{1,2}\.\d$")
 
 
 class MetadataError(Exception):
-    """Raised when exiftool fails to write metadata."""
+    """Raised when exiftool or xattr fails to write metadata."""
 
 
 def check_exiftool() -> None:
@@ -23,33 +26,49 @@ def check_exiftool() -> None:
         )
 
 
+def finder_tags_supported() -> bool:
+    """Return True where Finder tags can be written (macOS with the xattr tool)."""
+    return sys.platform == "darwin" and shutil.which("xattr") is not None
+
+
+def _run(args: list[str], what: str) -> subprocess.CompletedProcess[str]:
+    """Run a helper tool, turning hangs and launch failures into MetadataError."""
+    try:
+        return subprocess.run(
+            args,
+            capture_output=True,
+            text=True,
+            timeout=_SUBPROCESS_TIMEOUT,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise MetadataError(f"{what} timed out after {_SUBPROCESS_TIMEOUT}s") from exc
+    except OSError as exc:
+        raise MetadataError(f"{what} could not be run: {exc}") from exc
+
+
 def write_rating(path: Path, rating: int) -> None:
     """Write XMP:Rating to the image file via exiftool."""
-    result = subprocess.run(
+    result = _run(
         ["exiftool", f"-XMP:Rating={rating}", "-overwrite_original", str(path)],
-        capture_output=True,
-        text=True,
-        timeout=_SUBPROCESS_TIMEOUT,
+        "exiftool",
     )
     if result.returncode != 0:
         raise MetadataError(f"exiftool failed for {path}: {result.stderr.strip()}")
 
 
-def _read_finder_tags(path: Path) -> list[str]:
+def read_finder_tags(path: Path) -> list[str]:
     """Read existing macOS Finder tags from extended attributes."""
-    result = subprocess.run(
-        ["xattr", "-px", "com.apple.metadata:_kMDItemUserTags", str(path)],
-        capture_output=True,
-        text=True,
-        timeout=_SUBPROCESS_TIMEOUT,
-    )
+    result = _run(["xattr", "-px", _FINDER_TAGS_ATTR, str(path)], "xattr")
     if result.returncode != 0:
         return []
     try:
         hex_str = "".join(result.stdout.split())
-        return plistlib.loads(bytes.fromhex(hex_str))
+        parsed = plistlib.loads(bytes.fromhex(hex_str))
     except (ValueError, plistlib.InvalidFileException):
         return []
+    if not isinstance(parsed, list):
+        return []
+    return [tag for tag in parsed if isinstance(tag, str)]
 
 
 def _is_score_tag(tag: str) -> bool:
@@ -59,30 +78,28 @@ def _is_score_tag(tag: str) -> bool:
     return bool(_SCORE_TAG_RE.match(tag))
 
 
-def write_score_tag(path: Path, score: float) -> None:
+def write_score_tag(
+    path: Path, score: float, existing_tags: list[str] | None = None
+) -> None:
     """Write aesthetic score as a macOS Finder tag, preserving user's own tags.
 
     Writes a single numeric score tag (e.g. '7.3').
     Any previously written score tags are replaced; other user tags are preserved.
+
+    Pass existing_tags (from read_finder_tags) when the tags were read before the
+    file was rewritten: exiftool replaces the file via a temporary copy, which is
+    not guaranteed to carry extended attributes over.
     """
     score_tag = f"{score:.1f}"
 
-    existing = _read_finder_tags(path)
+    existing = read_finder_tags(path) if existing_tags is None else existing_tags
     kept = [t for t in existing if not _is_score_tag(t)]
     tags = kept + [score_tag]
 
     plist_bytes = plistlib.dumps(tags, fmt=plistlib.FMT_BINARY)
-    result = subprocess.run(
-        [
-            "xattr",
-            "-wx",
-            "com.apple.metadata:_kMDItemUserTags",
-            plist_bytes.hex(),
-            str(path),
-        ],
-        capture_output=True,
-        text=True,
-        timeout=_SUBPROCESS_TIMEOUT,
+    result = _run(
+        ["xattr", "-wx", _FINDER_TAGS_ATTR, plist_bytes.hex(), str(path)],
+        "xattr",
     )
     if result.returncode != 0:
         raise MetadataError(f"xattr failed for {path}: {result.stderr.strip()}")

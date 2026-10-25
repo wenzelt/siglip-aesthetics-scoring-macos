@@ -1,169 +1,73 @@
 from __future__ import annotations
 
 import argparse
-import sqlite3
-import sys
+import logging
+import time
+from collections import Counter
+from collections.abc import Sequence
 from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
-from rich.table import Table
 from rich.progress import (
     BarColumn,
+    MofNCompleteColumn,
     Progress,
+    SpinnerColumn,
     TaskProgressColumn,
     TextColumn,
     TimeElapsedColumn,
-    MofNCompleteColumn,
-    SpinnerColumn,
 )
+from rich.table import Table
 
-from image_classifier.classifier import (
-    Timings,
-    get_device,
-    load_model,
-)
+from image_classifier import __version__
+from image_classifier.classifier import Timings, get_device, load_model
 from image_classifier.database import (
     DB_PATH,
-    all_scores,
-    all_failures,
     is_processed,
     make_connection,
+    rating_counts,
 )
-from image_classifier.metadata import check_exiftool
-from image_classifier.logging_utils import LOG_PATH, setup_logger, log_error
-from image_classifier.scanner import scan_images
-from image_classifier.processor import ImageProcessor
+from image_classifier.logging_utils import LOG_PATH, log_error, setup_logger
+from image_classifier.metadata import check_exiftool, finder_tags_supported
+from image_classifier.processor import (
+    DEFAULT_BATCH_SIZE,
+    DEFAULT_WORKERS,
+    ImageProcessor,
+    ScoredImage,
+)
+from image_classifier.report import (
+    RunSummary,
+    print_profile_summary,
+    print_summary,
+    star_display,
+)
+from image_classifier.scanner import is_protected_bundle, scan_images
 
 console = Console()
+err_console = Console(stderr=True)
+
+_MAX_FAILURES_SHOWN = 10
+
+EXIT_OK = 0
+EXIT_ERROR = 1
+EXIT_INTERRUPTED = 130
 
 
-def star_display(rating: int) -> str:
-    """Return a unicode star string for the given 1–5 rating."""
-    return "★" * rating + "☆" * (5 - rating)
+def _positive_int(value: str) -> int:
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a whole number") from None
+    if number < 1:
+        raise argparse.ArgumentTypeError("must be at least 1")
+    return number
 
 
-def print_profile_summary(all_timings: list[Timings]) -> None:
-    """Print a table of mean and max milliseconds per phase."""
-    if not all_timings:
-        return
-    n = len(all_timings)
-    phases = [
-        ("Load", [t.load_ms for t in all_timings]),
-        ("Preprocess", [t.preprocess_ms for t in all_timings]),
-        ("Infer", [t.infer_ms for t in all_timings]),
-        ("Upsert", [t.upsert_ms for t in all_timings]),
-        ("Exiftool", [t.exiftool_ms for t in all_timings]),
-        ("Xattr", [t.xattr_ms for t in all_timings]),
-        ("Total", [t.total_ms for t in all_timings]),
-    ]
-
-    table = Table(title=f"Timing Profile ({n} images)", box=None, padding=(0, 2))
-    table.add_column("Phase", style="cyan")
-    table.add_column("Mean (ms)", justify="right", style="magenta")
-    table.add_column("Max (ms)", justify="right", style="magenta")
-
-    for name, values in phases:
-        mean = sum(values) / n
-        mx = max(values)
-        if name == "Total":
-            table.add_section()
-            table.add_row(
-                f"[bold]{name}[/bold]",
-                f"[bold]{mean:.1f}[/bold]",
-                f"[bold]{mx:.1f}[/bold]",
-            )
-        else:
-            table.add_row(name, f"{mean:.1f}", f"{mx:.1f}")
-
-    console.print()
-    console.print(Panel(table, expand=False, border_style="dim", title="⏱️ Timings"))
-
-
-def print_summary(
-    scored: int,
-    skipped: int,
-    errors: int,
-    folder: Path,
-    conn: sqlite3.Connection,
-) -> None:
-    rows = all_scores(folder, conn)
-
-    # Summary Table
-    summary_table = Table(box=None, padding=(0, 2))
-    summary_table.add_row("🖼️  Scored", f"[bold]{scored:>4}[/bold] images")
-    summary_table.add_row(
-        "⏭️  Skipped", f"[dim]{skipped:>4}[/dim] (already in database)"
-    )
-
-    if errors:
-        summary_table.add_row(
-            "❌  Errors", f"[red]{errors:>4}[/red] (logged to {LOG_PATH})"
-        )
-    else:
-        summary_table.add_row("✅  Errors", f"[green]{errors:>4}[/green]")
-
-    console.print()
-    console.print(
-        Panel(summary_table, expand=False, title="📊 Summary", border_style="blue")
-    )
-
-    if errors:
-        failures = all_failures(folder, conn)
-        if failures:
-            error_list = Table(box=None, header_style="bold red")
-            error_list.add_column("File")
-            error_list.add_column("Error")
-            for row in failures:
-                error_list.add_row(Path(row["path"]).name, f"[red]{row['error']}[/red]")
-            console.print(
-                Panel(
-                    error_list,
-                    title="Recent Failures",
-                    border_style="red",
-                    expand=False,
-                )
-            )
-
-    if not rows:
-        return
-
-    buckets: dict[int, int] = {5: 0, 4: 0, 3: 0, 2: 0, 1: 0}
-    for row in rows:
-        if row["rating"] in buckets:
-            buckets[row["rating"]] += 1
-
-    labels = {5: "8.5+", 4: "7–8.5", 3: "5.5–7", 2: "4–5.5", 1: "<4"}
-
-    dist_table = Table(title="Rating Distribution", box=None, padding=(0, 1))
-    dist_table.add_column("Rating", justify="left")
-    dist_table.add_column("Score Range", justify="right", style="dim")
-    dist_table.add_column("Count", justify="right")
-    dist_table.add_column("Bar", justify="left")
-
-    colors = {5: "green", 4: "green", 3: "yellow", 2: "orange3", 1: "red"}
-
-    for stars in (5, 4, 3, 2, 1):
-        count = buckets[stars]
-        bar = "█" * min(count, 30)
-        if count > 30:
-            bar += "+"
-        dist_table.add_row(
-            star_display(stars),
-            f"({labels[stars]})",
-            str(count),
-            f"[{colors[stars]}]{bar}[/]",
-        )
-
-    console.print()
-    console.print(
-        Panel(dist_table, expand=False, title="📈 Distribution", border_style="cyan")
-    )
-
-
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Score images aesthetically and write XMP star ratings."
+        prog="classify",
+        description="Score images aesthetically and write XMP star ratings.",
     )
     parser.add_argument("folder", type=Path, help="Folder of images to classify")
     parser.add_argument(
@@ -173,76 +77,209 @@ def main() -> None:
         "--recursive", action="store_true", help="Scan subdirectories recursively"
     )
     parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Score images and report the results without modifying any image "
+        "or the database",
+    )
+    parser.add_argument(
+        "--no-finder-tags",
+        action="store_true",
+        help="Write only the XMP star rating, not the macOS Finder score tag",
+    )
+    parser.add_argument(
+        "--workers",
+        type=_positive_int,
+        default=DEFAULT_WORKERS,
+        metavar="N",
+        help="Threads for decoding images and writing metadata (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=_positive_int,
+        default=DEFAULT_BATCH_SIZE,
+        metavar="N",
+        help="Images scored per model call; lower it if you run out of memory "
+        "(default: %(default)s)",
+    )
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=DB_PATH,
+        metavar="PATH",
+        help="SQLite cache of scored images (default: %(default)s)",
+    )
+    parser.add_argument(
         "--profile",
         action="store_true",
         help="Show per-phase timing summary after the run",
     )
-    args = parser.parse_args()
+    parser.add_argument(
+        "--version", action="version", version=f"%(prog)s {__version__}"
+    )
+    return parser
 
-    folder: Path = args.folder.resolve()
 
-    if not folder.exists():
-        console.print(f"[red]Error: folder not found: {folder}[/red]")
-        sys.exit(1)
-
-    if not folder.is_dir():
-        console.print(f"[red]Error: expected a folder, got a file: {folder}[/red]")
-        sys.exit(1)
-
-    check_exiftool()
-    logger = setup_logger()
-
-    # Header Panel
+def _print_header() -> None:
     header = Table(box=None, padding=(0, 1))
     header.add_column(justify="left")
     header.add_row("[bold cyan]Image Classifier[/bold cyan]")
     header.add_row("[dim]Score images aesthetically and write XMP star ratings[/dim]")
-
     console.print(Panel(header, border_style="cyan", expand=False))
 
-    console.print(
-        "[dim]Note: On first run the model (~1.5 GB) will be downloaded to ~/.cache/huggingface.[/dim]"
-    )
 
-    console.print()
-    with console.status("[bold blue]Loading aesthetic model...", spinner="dots"):
-        device = get_device()
-        device_color = "green" if device.type != "cpu" else "yellow"
-        device_label = device.type.upper()
-
-        model, preprocessor = load_model(device)
-        console.print(
-            f"✨ Model loaded on [{device_color}]{device_label}[/{device_color}]"
-        )
-
-    console.print()
-    images = scan_images(folder, args.recursive)
-    db_path = DB_PATH
-    conn = make_connection(db_path)
-
-    to_process = (
-        images if args.force else [p for p in images if not is_processed(p, conn)]
-    )
-    skipped = len(images) - len(to_process)
-
+def _print_scan_info(folder: Path, total: int, skipped: int, to_process: int) -> None:
     scan_table = Table(box=None, padding=(0, 2))
     scan_table.add_row("📂 Folder", f"[bold]{folder}[/bold]")
-    scan_table.add_row("🖼️  Total", f"{len(images)} images")
+    scan_table.add_row("🖼️  Total", f"{total} images")
     scan_table.add_row(
         "🔍 Scanned",
-        f"{skipped} already scored, [bold cyan]{len(to_process)}[/bold cyan] to process",
+        f"{skipped} already scored, [bold cyan]{to_process}[/bold cyan] to process",
     )
-
     console.print(
         Panel(scan_table, title="Scanning Info", border_style="dim", expand=False)
     )
     console.print()
 
-    processor = ImageProcessor(model, preprocessor, device, conn, db_path)
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Run the CLI and return the process exit code."""
+    args = build_parser().parse_args(argv)
+    try:
+        return _run(args)
+    except KeyboardInterrupt:
+        # Ctrl+C while scanning or loading the model; interrupting the scoring
+        # loop itself is handled in _process so it can still print a summary.
+        err_console.print("\n[yellow]Interrupted.[/yellow]")
+        return EXIT_INTERRUPTED
+
+
+def _run(args: argparse.Namespace) -> int:
+    folder: Path = args.folder.resolve()
+
+    if not folder.exists():
+        err_console.print(f"[red]Error: folder not found: {folder}[/red]")
+        return EXIT_ERROR
+    if not folder.is_dir():
+        err_console.print(f"[red]Error: expected a folder, got a file: {folder}[/red]")
+        return EXIT_ERROR
+    if is_protected_bundle(folder):
+        err_console.print(
+            f"[red]Error: {folder.name} is a photo-library bundle managed by another "
+            "app; modifying its contents can corrupt the library.[/red]\n"
+            "[dim]Export the photos to a normal folder and classify that instead.[/dim]"
+        )
+        return EXIT_ERROR
+
+    if not args.dry_run:
+        check_exiftool()
+    logger = setup_logger()
+
+    _print_header()
+    if args.dry_run:
+        console.print(
+            "[yellow]Dry run: no images or database rows will be written.[/yellow]"
+        )
+    console.print()
+
+    # Work out what needs doing before paying for the model load: when
+    # everything is already scored, the run should finish instantly.
+    try:
+        images = scan_images(folder, args.recursive)
+    except OSError as exc:
+        err_console.print(f"[red]Error: cannot read folder {folder}: {exc}[/red]")
+        return EXIT_ERROR
+
+    conn = make_connection(args.db)
+    processor: ImageProcessor | None = None
+    try:
+        to_process = (
+            images if args.force else [p for p in images if not is_processed(p, conn)]
+        )
+        skipped = len(images) - len(to_process)
+        _print_scan_info(folder, len(images), skipped, len(to_process))
+
+        if not to_process:
+            console.print("[green]Nothing to do.[/green]")
+            print_summary(
+                console,
+                RunSummary(
+                    scored=0,
+                    skipped=skipped,
+                    errors=0,
+                    rating_counts=rating_counts(folder, conn),
+                ),
+                LOG_PATH,
+            )
+            return EXIT_OK
+
+        console.print(
+            "[dim]Note: On first run the model (~1.5 GB) will be downloaded to "
+            "~/.cache/huggingface.[/dim]"
+        )
+        try:
+            with console.status(
+                "[bold blue]Loading aesthetic model...", spinner="dots"
+            ):
+                device = get_device()
+                model, preprocessor = load_model(device)
+        except Exception as exc:
+            err_console.print(
+                f"[red]Error: could not load the aesthetic model: "
+                f"{type(exc).__name__}: {exc}[/red]\n"
+                "[dim]The first run needs an internet connection to download the "
+                "model; interrupted downloads resume on the next attempt.[/dim]"
+            )
+            return EXIT_ERROR
+        device_color = "green" if device.type != "cpu" else "yellow"
+        console.print(
+            f"✨ Model loaded on [{device_color}]{device.type.upper()}[/{device_color}]"
+        )
+
+        finder_tags = finder_tags_supported() and not args.no_finder_tags
+        if not finder_tags and not args.no_finder_tags and not args.dry_run:
+            console.print(
+                "[dim]Finder tags need macOS; writing XMP star ratings only.[/dim]"
+            )
+        console.print()
+
+        processor = ImageProcessor(
+            model,
+            preprocessor,
+            device,
+            conn,
+            args.db,
+            workers=args.workers,
+            batch_size=args.batch_size,
+            write_finder_tags=finder_tags,
+            dry_run=args.dry_run,
+        )
+        return _process(
+            processor, to_process, folder, skipped, logger, args.dry_run, args.profile
+        )
+    finally:
+        # The processor swaps in a fresh connection if the old one died.
+        (processor.conn if processor else conn).close()
+
+
+def _process(
+    processor: ImageProcessor,
+    to_process: list[Path],
+    folder: Path,
+    skipped: int,
+    logger: logging.Logger | None,
+    dry_run: bool,
+    profile: bool,
+) -> int:
     scored = 0
     errors = 0
+    interrupted = False
     all_timings: list[Timings] = []
+    run_ratings: Counter[int] = Counter()
+    failures: list[tuple[str, str]] = []
 
+    start = time.perf_counter()
+    outcomes = processor.run(to_process)
     try:
         with Progress(
             SpinnerColumn(),
@@ -257,38 +294,51 @@ def main() -> None:
             task_id = progress.add_task(
                 "[cyan]Processing images...", total=len(to_process)
             )
-            for path in to_process:
-                progress.update(
-                    task_id, description=f"[cyan]Processing: [bold]{path.name}[/bold]"
-                )
-
-                def progress_callback(path: Path, score: float, rating: int) -> None:
-                    # Update task description with the result of the last processed image
+            for outcome in outcomes:
+                if isinstance(outcome, ScoredImage):
+                    scored += 1
+                    all_timings.append(outcome.timings)
+                    run_ratings[outcome.rating] += 1
                     progress.update(
                         task_id,
                         advance=1,
-                        description=f"Last: {path.name}  [bold yellow]{score:.2f}[/]  {star_display(rating)}",
+                        description=(
+                            f"Last: {outcome.path.name}  "
+                            f"[bold yellow]{outcome.score:.2f}[/]  "
+                            f"{star_display(outcome.rating)}"
+                        ),
                     )
-
-                try:
-                    score, timings = processor.process_image(path, progress_callback)
-                    all_timings.append(timings)
-                    scored += 1
-                except Exception as exc:
-                    error_str = f"{type(exc).__name__}: {exc}"
-                    log_error(logger, path, exc)
-                    processor.handle_failure(path, error_str)
+                else:
                     errors += 1
+                    log_error(logger, outcome.path, outcome.error)
+                    failures.append((outcome.path.name, outcome.message))
                     progress.update(task_id, advance=1)
     except KeyboardInterrupt:
+        interrupted = True
         console.print()
         console.print("[yellow]⚠️  Interrupt received. Partial results saved.[/yellow]")
+    finally:
+        outcomes.close()
+    elapsed = time.perf_counter() - start
 
-    print_summary(scored, skipped, errors, folder, processor.conn)
-    if args.profile:
-        print_profile_summary(all_timings)
-    processor.conn.close()
+    summary = RunSummary(
+        scored=scored,
+        skipped=skipped,
+        errors=errors,
+        # A dry run records nothing, so report only what this run scored.
+        rating_counts=(
+            run_ratings if dry_run else rating_counts(folder, processor.conn)
+        ),
+        elapsed_s=elapsed,
+        dry_run=dry_run,
+        failures=failures[-_MAX_FAILURES_SHOWN:][::-1],
+        failures_total=errors,
+    )
+    print_summary(console, summary, LOG_PATH)
+    if profile:
+        print_profile_summary(console, all_timings, elapsed)
+    return EXIT_INTERRUPTED if interrupted else EXIT_OK
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__":  # pragma: no cover
+    raise SystemExit(main())

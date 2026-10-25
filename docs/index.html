@@ -56,11 +56,11 @@
                     </div>
                     <div class="feature-card">
                         <h3>Built for Speed</h3>
-                        <p>Scans 100,000+ images efficiently. Resumable across runs thanks to a robust SQLite cache. Skips already-scored images.</p>
+                        <p>Scans 100,000+ images efficiently. Decodes and writes metadata in parallel and scores in batches. Resumable across runs thanks to a robust SQLite cache that skips already-scored images.</p>
                     </div>
                     <div class="feature-card">
                         <h3>Safety First</h3>
-                        <p>Persists scores to SQLite <em>before</em> writing metadata. A crash or error never loses a result. Failures are logged for review.</p>
+                        <p>An image is recorded only <em>after</em> its metadata is written, so a failure never hides an unrated photo, and an interrupted run simply resumes. Try <code>--dry-run</code> first; file modification times are preserved; failures are logged for review.</p>
                     </div>
                 </div>
             </div>
@@ -74,7 +74,7 @@
                         <div class="step-num">01</div>
                         <div class="step-content">
                             <h4>Scan</h4>
-                            <p>Scans your photo library for supported formats: <code>.jpg</code>, <code>.png</code>, <code>.heic</code>, and more.</p>
+                            <p>Scans your photo library for supported formats: <code>.jpg</code>, <code>.png</code>, <code>.heic</code>, <code>.webp</code> and <code>.tiff</code>.</p>
                         </div>
                     </div>
                     <div class="step">

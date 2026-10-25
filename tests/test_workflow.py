@@ -106,3 +106,30 @@ def test_lint_job_checks_formatting(workflow):
     assert "ruff format" in run_cmds or "ruff check" in run_cmds, (
         "Lint job must check code formatting with ruff"
     )
+
+
+def test_test_job_installs_exiftool_so_integration_tests_run(workflow):
+    steps = workflow["jobs"]["test"]["steps"]
+    run_cmds = " ".join(s.get("run", "") for s in steps)
+    assert "libimage-exiftool-perl" in run_cmds, "Linux needs exiftool installed"
+    assert "brew install exiftool" in run_cmds, "macOS needs exiftool installed"
+
+
+def test_test_job_covers_macos(workflow):
+    matrix = workflow["jobs"]["test"]["strategy"]["matrix"]
+    oses = list(matrix.get("os", [])) + [i["os"] for i in matrix.get("include", [])]
+    assert any(o.startswith("macos") for o in oses), (
+        "The tool targets macOS; CI must run there too"
+    )
+    assert workflow["jobs"]["test"]["runs-on"] == "${{ matrix.os }}"
+
+
+def test_coverage_artifacts_are_unique_per_matrix_entry(workflow):
+    steps = workflow["jobs"]["test"]["steps"]
+    (upload,) = [s for s in steps if "upload-artifact" in s.get("uses", "")]
+    name = upload["with"]["name"]
+    assert "matrix.os" in name and "matrix.python-version" in name
+
+
+def test_superseded_runs_are_cancelled(workflow):
+    assert workflow["concurrency"]["cancel-in-progress"] is True
